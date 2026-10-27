@@ -1,0 +1,275 @@
+/**
+ * styles.css
+ * Styling for Prompt Chips in chat input bar and Quick Prompts manager in Settings.
+ * Adheres to Antigravity CSS variables (--background, --foreground, --border, --muted, --card).
+ */
+
+/* ==========================================================================
+   Chat Input Prompt Chips Bar
+   ========================================================================== */
+
+#agy-prompt-chips-bar {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 4px 6px 6px 6px;
+    box-sizing: border-box;
+    position: relative;
+    user-select: none;
+    z-index: 10;
+}
+
+.agy-chips-scroll-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+    flex: 1;
+    min-width: 0;
+    padding: 2px 2px;
+}
+
+.agy-chips-scroll-container::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+/* Individual Chip Button */
+.agy-chip-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    background: var(--card, rgba(255, 255, 255, 0.04));
+    color: var(--foreground, #e2e8f0);
+    cursor: pointer;
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    flex-shrink: 0;
+    outline: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.agy-chip-btn:hover {
+    background: var(--muted, rgba(255, 255, 255, 0.08));
+    border-color: rgba(59, 130, 246, 0.5);
+    color: var(--foreground, #ffffff);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.agy-chip-btn:active {
+    transform: translateY(0);
+    filter: brightness(0.92);
+}
+
+.agy-chip-icon {
+    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+}
+
+.agy-chip-label {
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+
+.agy-chip-instant-badge {
+    font-size: 10px;
+    color: #eab308;
+    margin-left: 1px;
+    line-height: 1;
+}
+
+/* Sticky Gear / Settings Button */
+.agy-chip-gear-wrap {
+    flex-shrink: 0;
+    margin-left: 6px;
+    display: flex;
+    align-items: center;
+    border-left: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+    padding-left: 6px;
+}
+
+.agy-chip-gear-btn {
+    height: 26px;
+    width: 26px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground, #94a3b8);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    outline: none;
+}
+
+.agy-chip-gear-btn:hover {
+    color: var(--foreground, #ffffff);
+    background: var(--muted, rgba(255, 255, 255, 0.08));
+    transform: rotate(30deg);
+}
+
+/* Toast notification */
+.agy-prompt-toast {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 12px;
+    background: #1e293b;
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100;
+}
+
+.agy-prompt-toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ==========================================================================
+   Settings Pane: ⚡ Команды
+   ========================================================================== */
+
+.agy-custom-settings-panel {
+    box-sizing: border-box;
+}
+
+#agy-prompt-settings-pane {
+    max-width: 780px;
+    padding: 24px;
+    color: var(--foreground, #f8fafc);
+    font-family: inherit;
+}
+
+/* ==========================================================================
+   Telegram-style Emoji / Sticker Picker Popover
+   ========================================================================== */
+
+.agy-emoji-picker-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.agy-emoji-preview-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+    background: var(--background, rgba(0, 0, 0, 0.2));
+    color: var(--foreground, #f8fafc);
+    font-size: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    outline: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.agy-emoji-preview-btn:hover {
+    border-color: var(--primary, #3b82f6);
+    background: var(--muted, rgba(255, 255, 255, 0.08));
+    transform: scale(1.05);
+}
+
+.agy-emoji-preview-btn:active {
+    transform: scale(0.97);
+}
+
+.agy-emoji-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    width: 290px;
+    background: var(--popover, var(--card, #1e293b));
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
+    border-radius: 12px;
+    padding: 10px 12px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4), 0 4px 10px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+    backdrop-filter: blur(12px);
+    animation: agy-popover-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes agy-popover-in {
+    from {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.agy-emoji-category-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted-foreground, #94a3b8);
+    margin: 8px 0 4px 2px;
+}
+
+.agy-emoji-category-title:first-child {
+    margin-top: 2px;
+}
+
+.agy-emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+}
+
+.agy-emoji-item {
+    width: 38px;
+    height: 34px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    font-size: 19px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    user-select: none;
+    line-height: 1;
+}
+
+.agy-emoji-item:hover {
+    background: var(--muted, rgba(255, 255, 255, 0.12));
+    transform: scale(1.22);
+}
+
+.agy-emoji-item:active {
+    transform: scale(0.92);
+}
+
+/* Native tab suppression when any custom tab is active */
+.agy-custom-tab-active > :not(.agy-custom-settings-panel) {
+    display: none !important;
+}
+

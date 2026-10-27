@@ -1,0 +1,25 @@
+/* Proxy Settings UI - Native Antigravity Theme Helpers */
+
+.agy-proxy-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: agy-spin 0.75s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes agy-spin {
+  to { transform: rotate(360deg); }
+}
+
+#agy-proxy-container-root {
+  scrollbar-gutter: stable;
+}
+
+/* Native tab suppression when any custom tab is active */
+.agy-custom-tab-active > :not(.agy-custom-settings-panel) {
+  display: none !important;
+}

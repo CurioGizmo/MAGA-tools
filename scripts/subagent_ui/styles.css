@@ -1,0 +1,377 @@
+/* styles.css - Subagent Model & Reasoning Orchestrator UI styles */
+
+#agy-subagents-container-root {
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+#agy-subagents-container-root * {
+    box-sizing: border-box;
+}
+
+.agy-subagents-container {
+    width: 100%;
+}
+
+.agy-subagents-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-right: 4rem; /* 64px clearance from modal close X button */
+}
+
+/* Tier Card */
+.agy-subagent-card {
+    background: var(--card, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+    position: relative;
+}
+
+.agy-subagent-card:hover {
+    border-color: var(--border, rgba(128, 128, 128, 0.35));
+    background: var(--accent, rgba(128, 128, 128, 0.04));
+}
+
+.agy-subagent-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.agy-subagent-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Models List */
+.agy-subagent-models-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.agy-subagent-model-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--background, rgba(0, 0, 0, 0.02));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.15));
+    border-radius: 8px;
+    padding: 8px 12px;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.agy-subagent-model-row:hover {
+    background: var(--accent, rgba(128, 128, 128, 0.06));
+    border-color: var(--border, rgba(128, 128, 128, 0.3));
+}
+
+.agy-subagent-model-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.agy-subagent-model-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground, inherit);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.agy-subagent-model-id {
+    font-size: 11px;
+    color: var(--muted-foreground, #888888);
+    font-family: monospace;
+}
+
+/* Badges */
+.agy-subagent-badge {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.agy-subagent-badge-google {
+    background: rgba(59, 130, 246, 0.12);
+    color: #3b82f6;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+}
+
+.agy-subagent-badge-byok {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.agy-subagent-badge-level {
+    background: rgba(168, 85, 247, 0.12);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.agy-subagent-role-btn {
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+    border: 1px solid transparent;
+}
+
+.agy-subagent-role-primary {
+    background: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.agy-subagent-role-primary:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.agy-subagent-role-fallback {
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+.agy-subagent-role-fallback:hover {
+    background: rgba(245, 158, 11, 0.22);
+    border-color: rgba(245, 158, 11, 0.55);
+}
+
+/* Delete Button */
+.agy-subagent-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--muted-foreground, #888888);
+    cursor: pointer;
+    transition: color 0.15s, background-color 0.15s;
+    font-size: 13px;
+}
+
+.agy-subagent-delete-btn:hover {
+    color: #ef4444;
+    background-color: rgba(239, 68, 68, 0.1);
+}
+
+/* Empty State Placeholder */
+.agy-subagent-empty-placeholder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--background, rgba(0, 0, 0, 0.02));
+    border: 1px dashed var(--border, rgba(128, 128, 128, 0.25));
+    color: var(--muted-foreground, #888888);
+    font-size: 12.5px;
+}
+
+/* Add Model Dropdown & Button */
+.agy-subagent-add-section {
+    position: relative;
+    display: inline-block;
+}
+
+.agy-subagent-add-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--background, rgba(0, 0, 0, 0.04));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+    color: var(--foreground, inherit);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+}
+
+.agy-subagent-add-btn:hover {
+    background-color: var(--accent, rgba(128, 128, 128, 0.08));
+    border-color: var(--primary, #38bdf8);
+    color: var(--primary, #38bdf8);
+}
+
+.agy-subagent-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    min-width: 320px;
+    max-width: 400px;
+    background-color: var(--card, #1e1e2e);
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+    border-radius: 10px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+    z-index: 100;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.agy-subagent-search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+    background: var(--background, rgba(0, 0, 0, 0.05));
+    flex-shrink: 0;
+}
+
+.agy-subagent-search-icon {
+    font-size: 12px;
+    color: var(--muted-foreground, #888888);
+    user-select: none;
+    line-height: 1;
+}
+
+.agy-subagent-search-input {
+    flex: 1;
+    min-width: 0;
+    background: var(--background, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--border, rgba(128, 128, 128, 0.25));
+    border-radius: 6px;
+    padding: 5px 8px;
+    color: var(--foreground, inherit);
+    font-size: 12px;
+    outline: none;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.agy-subagent-search-input:focus {
+    border-color: var(--primary, #38bdf8);
+    box-shadow: 0 0 0 1px var(--primary, #38bdf8);
+}
+
+.agy-subagent-search-input::placeholder {
+    color: var(--muted-foreground, #888888);
+    opacity: 0.8;
+}
+
+.agy-subagent-search-clear {
+    background: transparent;
+    border: none;
+    color: var(--muted-foreground, #888888);
+    font-size: 13px;
+    line-height: 1;
+    padding: 4px 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, background-color 0.15s;
+}
+
+.agy-subagent-search-clear:hover {
+    color: var(--foreground, #ffffff);
+    background-color: var(--accent, rgba(128, 128, 128, 0.15));
+}
+
+.agy-subagent-dropdown-list {
+    max-height: 250px;
+    overflow-y: auto;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.agy-subagent-dropdown-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.agy-subagent-dropdown-group-title {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground, #888888);
+    padding: 6px 8px 3px 8px;
+    user-select: none;
+}
+
+.agy-subagent-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--foreground, inherit);
+    transition: background-color 0.15s, color 0.15s;
+    user-select: none;
+}
+
+.agy-subagent-dropdown-item:hover {
+    background-color: var(--accent, rgba(128, 128, 128, 0.12));
+    color: var(--primary, #38bdf8);
+}
+
+.agy-subagent-dropdown-empty {
+    padding: 12px 10px;
+    font-size: 12px;
+    color: var(--muted-foreground, #888888);
+    text-align: center;
+    user-select: none;
+}
+
+/* Card Footer */
+.agy-subagent-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--muted-foreground, #888888);
+    padding-top: 4px;
+    border-top: 1px solid var(--border, rgba(128, 128, 128, 0.1));
+}
+
+/* Native tab suppression when any custom tab is active.
+   Duplicated from byok_ui/styles.css so the package stays self-contained
+   if byok_ui is ever unbundled from the widget set. */
+.agy-custom-tab-active > :not(.agy-custom-settings-panel) {
+    display: none !important;
+}

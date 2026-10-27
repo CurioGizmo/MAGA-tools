@@ -1,0 +1,164 @@
+:root {
+  /* Default: Dark Theme */
+  --agy-hud-pill-bg: rgba(255, 255, 255, 0.05);
+  --agy-hud-pill-bg-hover: rgba(255, 255, 255, 0.09);
+  --agy-hud-pill-border: rgba(255, 255, 255, 0.10);
+  --agy-hud-pill-border-hover: rgba(255, 255, 255, 0.18);
+  --agy-hud-divider: rgba(255, 255, 255, 0.18);
+  --agy-hud-chevron: #71717a;
+
+  --agy-tip-bg: #18181b;
+  --agy-tip-border: rgba(255, 255, 255, 0.12);
+  --agy-tip-shadow: 0 16px 36px rgba(0, 0, 0, 0.55);
+  --agy-tip-title: #f4f4f5;
+  --agy-tip-text: #e4e4e7;
+  --agy-tip-muted: #a1a1aa;
+  --agy-tip-card-bg: rgba(255, 255, 255, 0.03);
+  --agy-tip-card-border: rgba(255, 255, 255, 0.07);
+  --agy-tip-track: rgba(255, 255, 255, 0.08);
+  --agy-tip-sep: rgba(255, 255, 255, 0.08);
+  --agy-tip-val: #f4f4f5;
+}
+
+body.theme-light,
+html.vscode-light,
+.agy-theme-light {
+  /* Light Theme */
+  --agy-hud-pill-bg: rgba(0, 0, 0, 0.04);
+  --agy-hud-pill-bg-hover: rgba(0, 0, 0, 0.08);
+  --agy-hud-pill-border: rgba(0, 0, 0, 0.12);
+  --agy-hud-pill-border-hover: rgba(0, 0, 0, 0.20);
+  --agy-hud-divider: rgba(0, 0, 0, 0.18);
+  --agy-hud-chevron: #6b7280;
+
+  --agy-tip-bg: #ffffff;
+  --agy-tip-border: rgba(0, 0, 0, 0.12);
+  --agy-tip-shadow: 0 16px 36px rgba(0, 0, 0, 0.14), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --agy-tip-title: #111827;
+  --agy-tip-text: #1f2937;
+  --agy-tip-muted: #6b7280;
+  --agy-tip-card-bg: rgba(0, 0, 0, 0.025);
+  --agy-tip-card-border: rgba(0, 0, 0, 0.07);
+  --agy-tip-track: rgba(0, 0, 0, 0.08);
+  --agy-tip-sep: rgba(0, 0, 0, 0.08);
+  --agy-tip-val: #111827;
+}
+
+.agy-hud-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding: 2px 8px;
+  background: var(--agy-hud-pill-bg);
+  border: 1px solid var(--agy-hud-pill-border);
+  border-radius: 9999px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 11px;
+  color: var(--agy-tip-text);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  -webkit-app-region: no-drag;
+}
+
+.agy-hud-pill:hover {
+  background: var(--agy-hud-pill-bg-hover);
+  border-color: var(--agy-hud-pill-border-hover);
+}
+
+body.theme-light .agy-hud-pill span,
+html.vscode-light .agy-hud-pill span,
+.agy-theme-light.agy-hud-pill span {
+  font-weight: 600 !important;
+}
+
+.agy-hud-pill.collapsed {
+  padding: 2px 6px;
+  gap: 4px;
+}
+
+.agy-hud-divider {
+  color: var(--agy-hud-divider);
+  font-weight: 300;
+}
+
+.agy-hud-tooltip {
+  position: fixed;
+  top: 36px;
+  left: 280px;
+  width: 360px;
+  background: var(--agy-tip-bg);
+  border: 1px solid var(--agy-tip-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: var(--agy-tip-shadow);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  color: var(--agy-tip-text);
+  z-index: 999999;
+  user-select: none;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.agy-hud-tooltip.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+@keyframes agy-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.agy-spinning {
+  animation: agy-spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+.agy-tip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--agy-tip-sep);
+  padding-bottom: 8px;
+}
+
+.agy-tip-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--agy-tip-title);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agy-tip-card {
+  margin-bottom: 12px;
+  padding: 10px;
+  background: var(--agy-tip-card-bg);
+  border-radius: 8px;
+  border: 1px solid var(--agy-tip-card-border);
+}
+
+.agy-tip-label {
+  color: var(--agy-tip-muted);
+}
+
+.agy-tip-val {
+  color: var(--agy-tip-val);
+  font-weight: 500;
+}
+
+.agy-tip-track {
+  width: 100%;
+  height: 5px;
+  background: var(--agy-tip-track);
+  border-radius: 3px;
+  overflow: hidden;
+}
