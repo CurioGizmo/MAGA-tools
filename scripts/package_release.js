@@ -45,7 +45,6 @@ function packageRelease() {
         'patch_manifest.json',
         'README.md',
         'README.ru.md',
-        'FEATURES.md',
         'LICENSE',
         'CONTRIBUTING.md',
         'AGENTS.md',

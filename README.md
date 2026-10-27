@@ -179,8 +179,7 @@ Run the interactive launcher from the project root:
 
 | Document | Purpose |
 | :--- | :--- |
-| 📋 [`FEATURES.md`](FEATURES.md) | **Single source of truth (SSOT):** detailed specification of all modules and UI states |
-| 🤖 [`AGENTS.md`](AGENTS.md) | **Engineering rules:** codebase rules, thrash-free DOM rendering, testing standards |
+| 🤖 [`AGENTS.md`](AGENTS.md) | **Architecture Guide:** component overview and repository directory structure |
 | 🤝 [`CONTRIBUTING.md`](CONTRIBUTING.md) | **Contributor guidelines:** contribution workflow, code quality, and licensing |
 
 ---
