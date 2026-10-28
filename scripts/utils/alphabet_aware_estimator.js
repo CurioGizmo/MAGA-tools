@@ -33,10 +33,6 @@ const CLASS_RATIOS = {
     emoji: 2.0       // surrogate-pair rich symbols
 };
 
-// Fast-path thresholds
-const PURE_LATIN_MAX_CHECK = 2048; // sample the first 2K chars for class share
-const SAMPLE_STEP = 1;
-
 function isCyrillicCode(code) {
     return (code >= 0x0400 && code <= 0x04FF) ||   // Cyrillic + supplement
            (code >= 0x0500 && code <= 0x052F);      // Cyrillic ext A/B

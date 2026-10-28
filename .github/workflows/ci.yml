@@ -122,7 +122,10 @@ jobs:
               node scripts/tests/test_process_manager.js &&
               node scripts/tests/test_prelogin_selector.js &&
               node scripts/tests/test_keyring_isolation.js &&
-              node scripts/tests/test_settings_backup.js
+              node scripts/tests/test_settings_backup.js &&
+              node scripts/tests/test_doctor.js &&
+              node scripts/tests/test_version_canary.js &&
+              node scripts/tests/test_patch_telemetry.js
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -132,6 +135,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run build:ui
       - name: Run test group
         run: ${{ matrix.group.run }}
       - name: Upload failure artifacts

@@ -7,8 +7,6 @@
  * Вызывает экспортируемые функции бандлеров напрямую без создания дочерних shell-процессов npm.
  */
 
-const path = require('path');
-
 const { bundleI18n } = require('./locales/bundle');
 const { bundleHud } = require('./hud/bundle');
 const { bundleAccountUi } = require('./account_ui/bundle');

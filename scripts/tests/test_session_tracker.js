@@ -168,7 +168,7 @@ console.log('  [✓] Deserialization preserves exact values without synthetic mu
 console.log('\n--- Test 7: Calibration hook on stream end ---');
 const trackerCal = new SessionUsageTracker();
 const origRecord = require('../utils/token_calculator').recordCalibrationSample;
-let calibrationCalls = [];
+const calibrationCalls = [];
 require('../utils/token_calculator').recordCalibrationSample = (modelId, chars, tokens) => {
     calibrationCalls.push({ modelId, chars, tokens });
     return origRecord ? false : false;

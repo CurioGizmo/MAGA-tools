@@ -38,7 +38,7 @@ function buildSyntheticBinary(profileName = 'legacy') {
         return v;
     };
 
-    let expectedSites = [];
+    const expectedSites = [];
     const pushSite = (site, variantName) => {
         const v = variantByName(site, variantName);
         pieces.push(v.original);

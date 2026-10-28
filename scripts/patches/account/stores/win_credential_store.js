@@ -18,10 +18,6 @@ function psB64(value) {
     return Buffer.from(String(value), 'utf8').toString('base64');
 }
 
-const PS_DECODER = `
-$dec = { param($b64) [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) }
-`;
-
 class WinCredentialStore extends CredentialStore {
     constructor(options = {}) {
         super();
