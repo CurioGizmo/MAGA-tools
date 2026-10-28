@@ -40,6 +40,8 @@ This document outlines the architecture, component overview, and directory struc
     ├── build_ui.js           # Fast in-process compiler for all UI bundles
     ├── package_release.js    # Packaging script for GitHub Releases
     ├── patcher.js            # Asar recipe runner
+    ├── dev/                  # Test instance runner and sandbox setup
+    ├── doctor/               # Health-check diagnostics, backup CLI & telemetry
     ├── installer/            # Interactive CLI and process supervisor
     ├── patcher/              # Atomic file patch engine and isolated recipes
     ├── hud/                  # Token & Quota Titlebar HUD widget

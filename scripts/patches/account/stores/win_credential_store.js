@@ -9,6 +9,19 @@ const { CredentialStore } = require('./credential_store');
 
 const TARGET_NAME = 'gemini:antigravity';
 
+/**
+ * S4-fix: PowerShell injection guard. All interpolated values are passed
+ * base64-encoded and decoded inside the script — no string interpolation
+ * of user-controlled data (email/userName) into PS code.
+ */
+function psB64(value) {
+    return Buffer.from(String(value), 'utf8').toString('base64');
+}
+
+const PS_DECODER = `
+$dec = { param($b64) [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) }
+`;
+
 class WinCredentialStore extends CredentialStore {
     constructor(options = {}) {
         super();
@@ -50,14 +63,15 @@ public class AgyCredReader {
             byte[] b = new byte[c.CredentialBlobSize];
             Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);
             CredFree(ptr);
-            return Encoding.UTF8.GetString(b);
+            return [Convert]::ToBase64String(b);
         }
-        return null;
+        return $null;
     }
 }
 "@
-$res = [AgyCredReader]::Read("${this.targetName}")
-if ($res) { [Console]::Out.Write($res) }
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${psB64(this.targetName)}"))
+$blobB64 = [AgyCredReader]::Read($target)
+if ($blobB64) { [Console]::Out.Write($blobB64) }
 `;
         try {
             const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
@@ -65,7 +79,11 @@ if ($res) { [Console]::Out.Write($res) }
                 timeout: 5000,
                 windowsHide: true
             });
-            return out ? out.trim() : null;
+            if (!out) return null;
+            const trimmed = out.trim();
+            if (!trimmed) return null;
+            // S5-fix: base64 blob transport preserves arbitrary bytes
+            return Buffer.from(trimmed, 'base64').toString('utf8');
         } catch (e) {
             return null;
         }
@@ -99,16 +117,15 @@ public class AgyCredWriter {
         public string TargetAlias;
         public string UserName;
     }
-    public static bool Write(string target, string user, string secret) {
-        byte[] b = Encoding.UTF8.GetBytes(secret);
-        IntPtr blob = Marshal.AllocHGlobal(b.Length);
-        Marshal.Copy(b, 0, blob, b.Length);
+    public static bool Write(string target, string user, byte[] secret) {
+        IntPtr blob = Marshal.AllocHGlobal(secret.Length);
+        Marshal.Copy(secret, 0, blob, secret.Length);
         CREDENTIAL cred = new CREDENTIAL();
         cred.Type = 1; // Generic
         cred.TargetName = target;
         cred.UserName = user;
         cred.CredentialBlob = blob;
-        cred.CredentialBlobSize = b.Length;
+        cred.CredentialBlobSize = secret.Length;
         cred.Persist = 2; // Local machine
         bool res = CredWriteW(ref cred, 0);
         Marshal.FreeHGlobal(blob);
@@ -116,17 +133,20 @@ public class AgyCredWriter {
     }
 }
 "@
-$target = "${this.targetName}"
-$user = "${userName}"
-$raw = [Console]::In.ReadToEnd()
-$ok = [AgyCredWriter]::Write($target, $user, $raw)
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${psB64(this.targetName)}"))
+$user = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${psB64(userName)}"))
+$secret = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim())
+$ok = [AgyCredWriter]::Write($target, $user, $secret)
 if ($ok) { [Console]::Out.Write("OK") }
 `;
         try {
+            // S4/S5-fix: secret travels as base64 over stdin — no PS string
+            // interpolation, byte-exact roundtrip for non-ASCII payloads.
+            const secretB64 = Buffer.from(secretString, 'utf8').toString('base64');
             const out = execFileSync('powershell.exe', [
                 '-NoProfile', '-NonInteractive', '-Command', psScript
             ], {
-                input: secretString,
+                input: secretB64,
                 encoding: 'utf8',
                 timeout: 5000,
                 windowsHide: true
@@ -153,7 +173,8 @@ public class AgyCredDeleter {
     }
 }
 "@
-$ok = [AgyCredDeleter]::Delete("${this.targetName}")
+$target = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${psB64(this.targetName)}"))
+$ok = [AgyCredDeleter]::Delete($target)
 if ($ok) { [Console]::Out.Write("OK") }
 `;
         try {

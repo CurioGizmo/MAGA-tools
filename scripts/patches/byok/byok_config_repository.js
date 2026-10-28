@@ -166,7 +166,15 @@ class ByokConfigRepository {
 
     getDefaultConfigPath() {
         if (process.env.AGY_BYOK_CONFIG_PATH) return process.env.AGY_BYOK_CONFIG_PATH;
-        const primary = path.join(os.homedir(), '.gemini', 'antigravity', 'byok_config.json');
+        // Isolation fix (2026-10-28): AGY_TEST_INSTANCE=1 routes to
+        // ~/.gemini/antigravity-test so test runs never touch the live config.
+        let magaDataDir;
+        try {
+            magaDataDir = require('../../utils/paths').getMagaDataDir();
+        } catch (e) {
+            magaDataDir = path.join(os.homedir(), '.gemini', 'antigravity');
+        }
+        const primary = path.join(magaDataDir, 'byok_config.json');
         const dir = path.dirname(primary);
         try {
             if (!fs.existsSync(dir)) {

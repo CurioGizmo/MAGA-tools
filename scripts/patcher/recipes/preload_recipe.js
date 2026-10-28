@@ -32,6 +32,7 @@ function loadWidgetScripts() {
     }
     return {
         i18nScript: readFileFirst([path.join(scriptsDir, 'patches', 'agy_i18n.js')]),
+        gateScript: readFileFirst([path.join(scriptsDir, 'ui', 'startup_compat_gate.js')]),
         hudScript: readFileFirst([path.join(scriptsDir, 'hud_widget.js')]),
         uiScript: readFileFirst([path.join(scriptsDir, 'patches', 'account_manager_ui.js')]),
         retryScript: readFileFirst([path.join(scriptsDir, 'patches', 'adaptive_retry.js')]),
@@ -42,9 +43,10 @@ function loadWidgetScripts() {
     };
 }
 
-function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript) {
+function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript, gateScript) {
     const widgets = [
         ['i18n', i18nScript],
+        ['Startup Gate', gateScript],
         ['HUD', hudScript],
         ['Account UI', uiScript],
         ['Adaptive Retry', retryScript],
@@ -67,6 +69,22 @@ function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, 
     return `\n// --- Antigravity 2: agyBridge & UI Widgets Patch ---
 (function() {
     try {
+        // Fault isolation (roadmap #4): global boundary BEFORE any widget —
+        // renderer errors / unhandled rejections of injected modules are
+        // logged with [agy:boundary] prefix and never break host UI.
+        try {
+            window.__AGY_FAULT_BOUNDARY__ = true;
+            window.addEventListener('error', function (e) {
+                if (e && e.target && e.target !== window) return;
+                var src = (e && e.filename) ? (e.filename + ':' + e.lineno) : 'unknown';
+                console.error('[agy:boundary] renderer error (isolated): ' + (e && e.message) + ' @ ' + src);
+            }, true);
+            window.addEventListener('unhandledrejection', function (e) {
+                var r = (e && e.reason && e.reason.message) ? e.reason.message : String((e && e.reason) || 'unknown');
+                console.error('[agy:boundary] unhandled rejection (isolated): ' + r);
+            });
+        } catch (_) {}
+
         function makeIpcInvoke(channel, label) {
             return async (...args) => {
                 try {
@@ -117,6 +135,7 @@ function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, 
             fetchProviderModels: makeIpcInvoke('agy:byok:fetch-provider-models', 'fetchProviderModels'),
             lookupByokReasoningLevels: makeIpcInvoke('agy:byok:lookup-reasoning-levels', 'lookupByokReasoningLevels'),
             reloadByokConfig: makeIpcInvoke('agy:byok:reload', 'reloadByokConfig'),
+            getByokCostStats: makeIpcInvoke('agy:byok:get-cost-stats', 'getByokCostStats'),
             getSubagentAvailableModels: makeIpcInvoke('agy:subagents:get-available-models', 'getSubagentAvailableModels')
         };
         if (typeof electron_1 !== 'undefined' && electron_1.contextBridge) {
@@ -127,6 +146,23 @@ function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, 
 
     function injectWidgets() {
         try {
+            // Canary startup gate (roadmap #2): resolve the compat verdict from
+            // the main process BEFORE any widget starts; widgets read
+            // window.__AGY_CANARY_LEVEL__ at init and degrade passively.
+            try {
+                if (typeof electron_1 !== 'undefined' && electron_1.ipcRenderer) {
+                    var canaryVerdict = null;
+                    try {
+                        canaryVerdict = electron_1.ipcRenderer.sendSync('agy:canary:get-level-sync');
+                    } catch (_) { canaryVerdict = null; }
+                    window.__AGY_CANARY_LEVEL__ = (canaryVerdict && canaryVerdict.level)
+                        ? canaryVerdict.level : 'full';
+                    if (window.__AGY_CANARY_LEVEL__ !== 'full') {
+                        console.warn('[agy:gate] canary compat level: ' + window.__AGY_CANARY_LEVEL__ +
+                            (canaryVerdict && canaryVerdict.reason ? ' (' + canaryVerdict.reason + ')' : ''));
+                    }
+                }
+            } catch (_) { /* gate is best-effort: default 'full' */ }
             ${widgetInjections}
         } catch (e) { console.error('[Patch] Failed to inject widgets:', e); }
     }
@@ -160,8 +196,8 @@ function applyPreloadRecipe(targetDir) {
         console.log('  [+] Patched preload.js (added DevTools hotkeys listener)');
     }
 
-    const { i18nScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript } = loadWidgetScripts();
-    const bridgeAndHudCode = generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript);
+    const { i18nScript, gateScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript } = loadWidgetScripts();
+    const bridgeAndHudCode = generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, proxyScript, promptScript, byokScript, subagentScript, gateScript);
 
     const markers = [
         '// --- Antigravity 2: agyBridge & UI Widgets Patch ---',

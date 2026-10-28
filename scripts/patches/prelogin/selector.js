@@ -38,6 +38,19 @@ try {
     } catch (__) {}
 }
 
+let storeFactoryModule = null;
+try {
+    storeFactoryModule = require('./account/stores/store_factory');
+} catch (_) {
+    try {
+        storeFactoryModule = require('../account/stores/store_factory');
+    } catch (__) {
+        try {
+            storeFactoryModule = require('./stores/store_factory');
+        } catch (___) {}
+    }
+}
+
 const COUNTDOWN_SEC = 20;
 const WATCHDOG_SEC = 25;
 const WINDOW_WIDTH = 460;
@@ -126,32 +139,190 @@ function getRealUserHome() {
     return os.homedir();
 }
 
-function getActiveEmail(storageManager = null) {
-    // 1. Decode email from active token file
-    const activeToken = getActiveTokenPath();
-    if (fs.existsSync(activeToken)) {
+let customCredStore = null;
+
+function _setCredStoreForTesting(store) {
+    customCredStore = store;
+}
+
+function getActiveCredStore() {
+    if (customCredStore) return customCredStore;
+    if (storeFactoryModule && typeof storeFactoryModule.getCredentialStore === 'function') {
         try {
-            const data = JSON.parse(fs.readFileSync(activeToken, 'utf8'));
+            return storeFactoryModule.getCredentialStore();
+        } catch (_) {}
+    }
+    return null;
+}
+
+function getActiveCredentialRaw() {
+    const store = getActiveCredStore();
+    if (store && typeof store.read === 'function') {
+        try {
+            const raw = store.read();
+            if (raw && typeof raw === 'string' && raw.trim().length > 0) {
+                return raw.trim();
+            }
+        } catch (e) {
+            console.warn('[PreLoginSelector] Failed to read from credStore:', e.message);
+        }
+    }
+    const tokenPath = getActiveTokenPath();
+    if (fs.existsSync(tokenPath)) {
+        try {
+            const raw = fs.readFileSync(tokenPath, 'utf8').trim();
+            if (raw) return raw;
+        } catch (_) {}
+    }
+    return null;
+}
+
+function setActiveCredentialRaw(raw) {
+    let storeOk = false;
+    const store = getActiveCredStore();
+    if (store && typeof store.write === 'function') {
+        try {
+            storeOk = store.write(raw);
+        } catch (e) {
+            console.warn('[PreLoginSelector] Failed to write to credStore:', e.message);
+        }
+    }
+    try {
+        const activeToken = getActiveTokenPath();
+        const dir = path.dirname(activeToken);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const tmpPath = `${activeToken}.tmp.${process.pid}.${Date.now()}`;
+        fs.writeFileSync(tmpPath, raw, { mode: 0o600, encoding: 'utf8' });
+        try { fs.chmodSync(tmpPath, 0o600); } catch (_) {}
+        fs.renameSync(tmpPath, activeToken);
+        try { fs.chmodSync(activeToken, 0o600); } catch (_) {}
+    } catch (_) {}
+    return storeOk;
+}
+
+function clearActiveCredential() {
+    const store = getActiveCredStore();
+    if (store && typeof store.delete === 'function') {
+        try {
+            store.delete();
+        } catch (e) {
+            console.warn('[PreLoginSelector] Failed to delete from credStore:', e.message);
+        }
+    }
+    try {
+        const activeToken = getActiveTokenPath();
+        if (fs.existsSync(activeToken)) {
+            fs.unlinkSync(activeToken);
+        }
+    } catch (_) {}
+}
+
+let customAppStoragePaths = null;
+
+function _setAppStoragePathsForTesting(paths) {
+    customAppStoragePaths = paths;
+}
+
+let customProfilesDir = null;
+
+function _setProfilesDirForTesting(dir) {
+    customProfilesDir = dir;
+}
+
+function getProfilesDir() {
+    if (customProfilesDir) return customProfilesDir;
+    if (pathsModule && pathsModule.getProfilesDir) {
+        try {
+            return pathsModule.getProfilesDir();
+        } catch (_) {}
+    }
+    return path.join(os.homedir(), '.gemini', 'antigravity', 'profiles');
+}
+
+function getAllAppStoragePaths() {
+    if (customAppStoragePaths) return customAppStoragePaths;
+    const candidates = [];
+    try {
+        const electron = require('electron');
+        if (electron && electron.app && typeof electron.app.getPath === 'function') {
+            const userData = electron.app.getPath('userData');
+            if (userData) candidates.push(path.join(userData, 'app_storage.json'));
+        }
+    } catch (_) {}
+
+    candidates.push(path.join(os.homedir(), '.config', 'Antigravity2', 'app_storage.json'));
+    candidates.push(path.join(os.homedir(), '.config', 'Antigravity', 'app_storage.json'));
+
+    if (process.platform === 'win32') {
+        const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+        candidates.push(
+            path.join(appData, 'Antigravity', 'app_storage.json'),
+            path.join(appData, 'Antigravity2', 'app_storage.json')
+        );
+    }
+    return Array.from(new Set(candidates));
+}
+
+function updateAppStorageEmail(email) {
+    for (const storagePath of getAllAppStoragePaths()) {
+        if (!fs.existsSync(storagePath)) continue;
+        try {
+            const raw = fs.readFileSync(storagePath, 'utf8');
+            const data = JSON.parse(raw);
+            data['jetski.onboarding.lastLoginUsername'] = email;
+            fs.writeFileSync(storagePath, JSON.stringify(data, null, 2), 'utf8');
+            console.log(`[PreLoginSelector] Updated lastLoginUsername to: ${email} in ${storagePath}`);
+        } catch (e) {
+            console.warn(`[PreLoginSelector] Could not update lastLoginUsername in ${storagePath}:`, e.message);
+        }
+    }
+}
+
+function getActiveEmail(storageManager = null) {
+    const raw = getActiveCredentialRaw();
+    if (raw) {
+        try {
+            const data = JSON.parse(raw);
             if (data.id_token) {
                 const jwt = decodeJwtPayload(data.id_token);
                 if (jwt && jwt.email) return jwt.email.toLowerCase().trim();
             }
+            if (data.user_email) return data.user_email.toLowerCase().trim();
             if (data.email) return data.email.toLowerCase().trim();
+
+            const refreshToken = data.token?.refresh_token || data.refresh_token;
+            if (refreshToken) {
+                for (const profilesDir of getAllProfilesCandidateDirs()) {
+                    let entries = [];
+                    try { entries = fs.readdirSync(profilesDir, { withFileTypes: true }); } catch (_) { continue; }
+                    for (const ent of entries) {
+                        if (!ent.isDirectory()) continue;
+                        const credPath = path.join(profilesDir, ent.name, 'credentials.json');
+                        const metaPath = path.join(profilesDir, ent.name, 'profile.json');
+                        if (fs.existsSync(credPath) && fs.existsSync(metaPath)) {
+                            try {
+                                const savedCred = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+                                const savedRt = savedCred.token?.refresh_token || savedCred.refresh_token;
+                                if (savedRt === refreshToken) {
+                                    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                                    if (meta.email) return meta.email.toLowerCase().trim();
+                                }
+                            } catch (_) {}
+                        }
+                    }
+                }
+            }
         } catch (_) {}
     }
-
-    // Return null if no active token file exists (prevent locking stale accounts on new sign-in)
     return null;
 }
 
 // ─── Profile discovery & Auto-sync ───────────────────────────────────────────
 
 function syncActiveTokenToProfiles() {
-    const activeToken = getActiveTokenPath();
-    if (!fs.existsSync(activeToken)) return;
+    const raw = getActiveCredentialRaw();
+    if (!raw) return;
     try {
-        const raw = fs.readFileSync(activeToken, 'utf8').trim();
-        if (!raw) return;
         const data = JSON.parse(raw);
         let email = null;
         let name = '';
@@ -166,11 +337,12 @@ function syncActiveTokenToProfiles() {
                 if (jwt.sub) sub = jwt.sub;
             }
         }
+        if (!email && data.user_email) email = data.user_email.toLowerCase().trim();
         if (!email && data.email) email = data.email.toLowerCase().trim();
         if (!email) return;
 
         const folderName = email.replace(/[^a-z0-9._-]/g, '_');
-        const profilesDir = path.join(os.homedir(), '.gemini', 'antigravity', 'profiles');
+        const profilesDir = getProfilesDir();
         const targetDir = path.join(profilesDir, folderName);
         if (!fs.existsSync(targetDir)) {
             fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
@@ -208,9 +380,11 @@ function syncActiveTokenToProfiles() {
     }
 }
 
+
 function getAllProfilesCandidateDirs() {
+    if (customProfilesDir) return [customProfilesDir];
     const dirs = new Set();
-    dirs.add(path.join(os.homedir(), '.gemini', 'antigravity', 'profiles'));
+    dirs.add(getProfilesDir());
 
     const realHome = getRealUserHome();
     if (realHome && realHome !== os.homedir()) {
@@ -307,11 +481,9 @@ function getSavedProfiles(storageManager = null) {
 // ─── Token switching with safe backup ─────────────────────────────────────────
 
 function backupCurrentToken() {
-    const activeToken = getActiveTokenPath();
-    if (!fs.existsSync(activeToken)) return;
+    const raw = getActiveCredentialRaw();
+    if (!raw) return;
     try {
-        const raw = fs.readFileSync(activeToken, 'utf8').trim();
-        if (!raw) return;
         const data = JSON.parse(raw);
         let email = null;
         let name = '';
@@ -326,10 +498,11 @@ function backupCurrentToken() {
                 if (jwt.sub) sub = jwt.sub;
             }
         }
+        if (!email && data.user_email) email = data.user_email.toLowerCase().trim();
         if (!email && data.email) email = data.email.toLowerCase().trim();
         if (email) {
             const folderName = email.replace(/[^a-z0-9._-]/g, '_');
-            const targetDir = path.join(os.homedir(), '.gemini', 'antigravity', 'profiles', folderName);
+            const targetDir = path.join(getProfilesDir(), folderName);
             if (!fs.existsSync(targetDir)) {
                 fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
             }
@@ -365,17 +538,10 @@ function switchToProfile(chosen, storageManager = null) {
     // 2. Only write new credentials if switching to a DIFFERENT account
     if (!isSameAccount) {
         const newCredRaw = fs.readFileSync(chosen.credPath, 'utf8');
-        const activeToken = getActiveTokenPath();
-        const dir = path.dirname(activeToken);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-
-        const tmpPath = `${activeToken}.tmp.${process.pid}.${Date.now()}`;
-        fs.writeFileSync(tmpPath, newCredRaw, { mode: 0o600, encoding: 'utf8' });
-        try { fs.chmodSync(tmpPath, 0o600); } catch (_) {}
-        fs.renameSync(tmpPath, activeToken);
-        try { fs.chmodSync(activeToken, 0o600); } catch (_) {}
+        setActiveCredentialRaw(newCredRaw);
+        console.log('[PreLoginSelector] Switched active credentials to:', chosen.email);
     } else {
-        console.log('[PreLoginSelector] Chosen profile is already active, preserving token file:', chosen.email);
+        console.log('[PreLoginSelector] Chosen profile is already active, preserving credentials:', chosen.email);
     }
 
     // 3. Update lastActiveAt in profile.json
@@ -397,15 +563,9 @@ function switchToProfile(chosen, storageManager = null) {
         }
     } catch (_) {}
 
-    try {
-        const storagePath = path.join(os.homedir(), '.config', 'Antigravity2', 'app_storage.json');
-        if (fs.existsSync(storagePath)) {
-            const s = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
-            s['jetski.onboarding.lastLoginUsername'] = chosen.email;
-            fs.writeFileSync(storagePath, JSON.stringify(s, null, 2), 'utf8');
-        }
-    } catch (_) {}
+    updateAppStorageEmail(chosen.email);
 }
+
 
 // ─── HTML builder ─────────────────────────────────────────────────────────────
 
@@ -596,22 +756,14 @@ async function showPreLoginProfileSelector(options = {}) {
                 // (sentinel reachable ONLY from the #sb button, see buildHtml)
                 try {
                     backupCurrentToken();
-                    const activeToken = getActiveTokenPath();
-                    if (fs.existsSync(activeToken)) {
-                        fs.unlinkSync(activeToken);
-                        console.log('[PreLoginSelector] Cleared active token for clean new login');
-                    }
+                    clearActiveCredential();
+                    console.log('[PreLoginSelector] Cleared active credentials for clean new login');
                     if (storageManager && typeof storageManager.updateItems === 'function') {
                         storageManager.updateItems({ 'jetski.onboarding.lastLoginUsername': '' }).catch(() => {});
                     } else if (storageManager && typeof storageManager.setItem === 'function') {
                         storageManager.setItem('jetski.onboarding.lastLoginUsername', '');
                     }
-                    const storagePath = path.join(os.homedir(), '.config', 'Antigravity2', 'app_storage.json');
-                    if (fs.existsSync(storagePath)) {
-                        const s = JSON.parse(fs.readFileSync(storagePath, 'utf8'));
-                        s['jetski.onboarding.lastLoginUsername'] = '';
-                        fs.writeFileSync(storagePath, JSON.stringify(s, null, 2), 'utf8');
-                    }
+                    updateAppStorageEmail('');
                 } catch (e) {
                     console.warn('[PreLoginSelector] Clear token on new login error:', e.message);
                 }
@@ -677,5 +829,15 @@ module.exports = {
     focusSelectorWindow,
     getActiveEmail,
     getSavedProfiles,
-    switchToProfile
+    switchToProfile,
+    getActiveCredentialRaw,
+    setActiveCredentialRaw,
+    clearActiveCredential,
+    updateAppStorageEmail,
+    getAllAppStoragePaths,
+    getProfilesDir,
+    _setCredStoreForTesting,
+    _setAppStoragePathsForTesting,
+    _setProfilesDirForTesting
 };
+

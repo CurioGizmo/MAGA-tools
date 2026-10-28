@@ -3,6 +3,8 @@
  */
 class HudState {
   constructor() {
+    // Roadmap #2: canary compat level ('full' by default; set at init from window.__AGY_CANARY_LEVEL__)
+    this.canaryLevel = 'full';
     this.currentConvId = null;
     this.contextTokens = 0;
     this.maxContext = 1000000;

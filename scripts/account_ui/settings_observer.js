@@ -82,15 +82,21 @@ class SettingsObserver {
   }
 
   start() {
-    this.observer = new MutationObserver(() => {
+    // Fault isolation (roadmap #4): observer callback + rAF tick are guarded —
+    // a throw inside checkAndInject degrades to a skipped tick instead of
+    // killing the MutationObserver pipeline for the whole settings modal.
+    const _guard = (typeof AgyFaultIsolation !== 'undefined' && AgyFaultIsolation.guard)
+      ? AgyFaultIsolation.guard
+      : (m, t, fn) => fn;
+    this.observer = new MutationObserver(_guard('Account-UI', 'observer-cb', () => {
       if (!this.scheduledCheck) {
         this.scheduledCheck = true;
-        requestAnimationFrame(() => {
+        requestAnimationFrame(_guard('Account-UI', 'rAF-check', () => {
           this.scheduledCheck = false;
           this.checkAndInject();
-        });
+        }));
       }
-    });
+    }));
 
     this.observer.observe(document.body, { childList: true, subtree: true });
     this.checkAndInject();

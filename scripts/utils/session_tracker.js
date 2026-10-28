@@ -141,9 +141,37 @@ class SessionUsageTracker {
             this.globalSession.thoughtsTokens += thoughtsTokens;
             this.globalSession.totalTokens = this.globalSession.inputTokens + this.globalSession.outputTokens;
             this.globalSession.requests += 1;
+
+            // Roadmap #9: calibration sample for the alphabet-aware estimator.
+            // Actual context tokens (Google) vs our char count for the turn:
+            // usageMetadata.totalTokenCount covers the full context window.
+            try {
+                if (tokenCalcModule && tokenCalcModule.recordCalibrationSample && modelName && total > 0) {
+                    // Context chars proxy: tokens * global blended ratio would be
+                    // circular; instead we feed turn-level evidence only when the
+                    // caller supplied a char count (see recordCalibrationTurn).
+                    if (this._pendingCalibrationChars && this._pendingCalibrationChars > 0) {
+                        tokenCalcModule.recordCalibrationSample(
+                            modelName,
+                            this._pendingCalibrationChars,
+                            total
+                        );
+                        this._pendingCalibrationChars = 0;
+                    }
+                }
+            } catch (_) { /* calibration is best-effort */ }
         }
 
         return this.getStats(convId);
+    }
+
+    /**
+     * Roadmap #9: records the raw char count of an outgoing request body so
+     * the next stream-end usageMetadata can calibrate the per-model ratio.
+     * Called by the proxy before forwarding a request.
+     */
+    recordCalibrationChars(chars) {
+        this._pendingCalibrationChars = Number(chars) || 0;
     }
 
     getStats(convId, includeSubagents = true) {

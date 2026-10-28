@@ -1,10 +1,21 @@
 const fs = require('fs');
 
 /**
- * Standardized token and transcript calculation module.
- * Ratio: ~3.5 chars per token for Google Gemini models.
+ * Standardized token and transcript calculation module (SSOT, Rule 2).
+ * Baseline ratio: ~3.5 chars/token for Latin; per-alphabet estimation
+ * (roadmap #9) blends Cyrillic (~1.8) and CJK (~1.0) shares so Russian
+ * dialogs are estimated 2-3x more accurately. Pure-Latin content keeps
+ * the exact 3.5 behavior (zero regression).
  */
 const CHARS_PER_TOKEN = 3.5;
+
+const {
+    estimateTokensAlphabetAware,
+    estimateTokensRawAlphabetAware,
+    estimateTokensForModel,
+    recordCalibrationSample,
+    getCalibratedRatio
+} = require('./alphabet_aware_estimator');
 
 const cache = new Map();
 
@@ -25,11 +36,13 @@ function parseTranscriptContent(content) {
     }
 
     const lines = content.split('\n');
-    let userInputChars = 0;
-    let modelThinkingChars = 0;
-    let modelContentChars = 0;
-    let toolInputChars = 0;
-    let toolCallChars = 0;
+    // Roadmap #9: accumulate raw text slices per channel, then estimate
+    // tokens per channel with the alphabet-aware estimator (SSOT).
+    let userInputText = '';
+    let modelThinkingText = '';
+    let modelContentText = '';
+    let toolInputText = '';
+    let toolCallText = '';
     let steps = 0;
     let requests = 0;
 
@@ -40,36 +53,36 @@ function parseTranscriptContent(content) {
         try {
             const obj = JSON.parse(trimmed);
             if (obj.type === 'USER_INPUT') {
-                userInputChars += (obj.content || '').length;
+                userInputText += (obj.content || '');
             } else if (obj.type === 'PLANNER_RESPONSE') {
                 requests++;
-                modelThinkingChars += (obj.thinking || '').length;
-                modelContentChars += (obj.content || '').length;
+                modelThinkingText += (obj.thinking || '');
+                modelContentText += (obj.content || '');
                 if (obj.tool_calls) {
-                    toolCallChars += JSON.stringify(obj.tool_calls).length;
+                    toolCallText += JSON.stringify(obj.tool_calls);
                 }
             } else {
-                toolInputChars += (obj.content || '').length;
+                toolInputText += (obj.content || '');
             }
         } catch (e) {
             steps--; // Не учитываем поврежденную строку как завершенный шаг
             // Fallback: estimate based on raw string length to prevent token drops during active writes
             if (trimmed.includes('"type":"USER_INPUT"')) {
-                userInputChars += trimmed.length;
+                userInputText += trimmed;
             } else if (trimmed.includes('"type":"PLANNER_RESPONSE"')) {
                 requests++;
-                modelContentChars += trimmed.length;
+                modelContentText += trimmed;
             } else {
-                toolInputChars += trimmed.length;
+                toolInputText += trimmed;
             }
         }
     }
 
-    const userInputTokens = Math.round(userInputChars / CHARS_PER_TOKEN);
-    const modelThinkingTokens = Math.round(modelThinkingChars / CHARS_PER_TOKEN);
-    const modelContentTokens = Math.round(modelContentChars / CHARS_PER_TOKEN);
-    const toolCallTokens = Math.round(toolCallChars / CHARS_PER_TOKEN);
-    const toolInputTokens = Math.round(toolInputChars / CHARS_PER_TOKEN);
+    const userInputTokens = estimateTokensAlphabetAware(userInputText);
+    const modelThinkingTokens = estimateTokensAlphabetAware(modelThinkingText);
+    const modelContentTokens = estimateTokensAlphabetAware(modelContentText);
+    const toolCallTokens = estimateTokensAlphabetAware(toolCallText);
+    const toolInputTokens = estimateTokensAlphabetAware(toolInputText);
     const modelOutputTokens = modelThinkingTokens + modelContentTokens + toolCallTokens;
     const toolTokens = toolInputTokens + toolCallTokens;
     const totalTokens = userInputTokens + toolInputTokens + modelThinkingTokens + modelContentTokens + toolCallTokens;
@@ -131,20 +144,30 @@ function parseTranscriptFile(filePath, force = false) {
 
 const { formatTokens } = require('./number_format');
 
-function estimateTokens(chars) {
-    if (!chars || chars <= 0) return 0;
-    return Math.round(chars / CHARS_PER_TOKEN);
+/**
+ * Legacy signature preserved: accepts a char count (number) or raw text.
+ * Numbers use the Latin baseline; strings get the alphabet-aware estimate.
+ */
+function estimateTokens(charsOrText) {
+    if (typeof charsOrText === 'string') return estimateTokensAlphabetAware(charsOrText);
+    if (!charsOrText || charsOrText <= 0) return 0;
+    return Math.round(charsOrText / CHARS_PER_TOKEN);
 }
 
-function estimateTokensRaw(chars) {
-    if (!chars || chars <= 0) return 0;
-    return chars / CHARS_PER_TOKEN;
+function estimateTokensRaw(charsOrText) {
+    if (typeof charsOrText === 'string') return estimateTokensRawAlphabetAware(charsOrText);
+    if (!charsOrText || charsOrText <= 0) return 0;
+    return charsOrText / CHARS_PER_TOKEN;
 }
 
 module.exports = {
     CHARS_PER_TOKEN,
     estimateTokens,
     estimateTokensRaw,
+    estimateTokensAlphabetAware,
+    estimateTokensForModel,
+    recordCalibrationSample,
+    getCalibratedRatio,
     parseTranscriptContent,
     parseTranscriptFile,
     clearTranscriptCache,

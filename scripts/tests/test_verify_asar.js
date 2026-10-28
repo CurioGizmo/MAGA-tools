@@ -3,7 +3,8 @@ const path = require('path');
 const asarPath = path.join(__dirname, '../../app.asar.patched');
 
 function checkFile(pathInAsar, patterns) {
-    const buf = asar.extractFile(asarPath, pathInAsar);
+    const normalizedPath = path.normalize(pathInAsar);
+    const buf = asar.extractFile(asarPath, normalizedPath);
     const content = buf.toString('utf8');
     console.log(`Checking ${pathInAsar} (${content.length} bytes):`);
     let allOk = true;

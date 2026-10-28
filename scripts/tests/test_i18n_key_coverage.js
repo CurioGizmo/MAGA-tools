@@ -109,6 +109,6 @@ if (unexpectedMissing.length > 0 || newlyResolved.length > 0) {
 }
 
 assert.deepStrictEqual(missingKeys, KNOWN_MISSING, 'Missing keys must match KNOWN_MISSING baseline exactly');
-console.log(`  [✓] Key coverage verified: ${foundKeys.size - missingKeys.length}/${foundKeys.size} keys covered (${missingKeys.length} known missing tracked under TODO B5)`);
+console.log(`  [✓] Key coverage verified: ${foundKeys.size - missingKeys.length}/${foundKeys.size} keys covered${missingKeys.length > 0 ? ` (${missingKeys.length} tracked in KNOWN_MISSING baseline)` : ' (full coverage)'}`);
 
 console.log('\n=== ALL i18n KEY COVERAGE TESTS PASSED SUCCESSFULLY! ✓ ===\n');

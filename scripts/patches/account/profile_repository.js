@@ -30,7 +30,16 @@ class ProfileRepository {
             if (this.paths && this.paths.getProfilesDir) {
                 return this.paths.getProfilesDir();
             }
-            const dir = path.join(os.homedir(), '.gemini', 'antigravity', 'profiles');
+            // Isolation fix (2026-10-28): SSOT data dir (AGY_TEST_INSTANCE-aware)
+            let magaDataDir;
+            try {
+                magaDataDir = this.paths && this.paths.getMagaDataDir
+                    ? this.paths.getMagaDataDir()
+                    : path.join(os.homedir(), '.gemini', 'antigravity');
+            } catch (e) {
+                magaDataDir = path.join(os.homedir(), '.gemini', 'antigravity');
+            }
+            const dir = path.join(magaDataDir, 'profiles');
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
             }

@@ -358,6 +358,18 @@ class CloudCodeProxy {
 
             const targetModel = (parsedBody && (parsedBody.model || parsedBody.request?.model)) || sniffer.model;
 
+            // Roadmap #9: feed request char count for per-model calibration
+            // (consumed by the next stream-end usageMetadata via tracker).
+            // IMPORTANT: the estimator works in UTF-16 code units (JS string
+            // length), NOT bytes — decode the body first, otherwise Cyrillic
+            // request bodies inflate the ratio ~1.78x and calibration
+            // overestimates by tens of percent.
+            try {
+                if (this.tracker && typeof this.tracker.recordCalibrationChars === 'function') {
+                    this.tracker.recordCalibrationChars(reqBuffer.toString('utf8').length);
+                }
+            } catch (_) { /* best-effort */ }
+
             if (this.byokManager && targetModel && this.byokManager.isByokSlot(targetModel)) {
                 if (this._handleByokIntercept(ctx, parsedBody, reqBuffer, targetModel)) return;
             }

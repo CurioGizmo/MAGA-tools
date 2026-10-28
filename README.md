@@ -10,7 +10,7 @@
 Real-time token & context monitoring, external models (BYOK), multi-account management with startup profile selector, subagent model pools & routing, quick-commands bar, and built-in proxy manager.
 
 [![Version](https://img.shields.io/badge/version-v1.0.0-3b82f6.svg?style=flat-square)](package.json)
-[![Antigravity](https://img.shields.io/badge/antigravity-v2.14%20--%20v2.24+-10b981.svg?style=flat-square)](patch_manifest.json)
+[![Antigravity](https://img.shields.io/badge/antigravity-v2.14%20--%20v2.27+-10b981.svg?style=flat-square)](patch_manifest.json)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-8b5cf6.svg?style=flat-square)](#️-installation-patching--rollback)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Integration](https://img.shields.io/badge/integration-100%25%20Native-f97316.svg?style=flat-square)](#️-architecture-principles)
@@ -128,6 +128,10 @@ Built for corporate development intranets, restricted networks, or dedicated for
 * 🛠️ **Developer Tools (DevTools):** enables Chrome DevTools via **`F12`** and **`Ctrl + Shift + I`** hotkeys in release builds for inspecting and debugging.
 * 📢 **Human-Readable Provider Errors (AGY-ERR):** BYOK and proxy failures (DNS, connection drops, 503, invalid key, content filter) no longer surface as raw Go stack traces — the backend emits a compact `[AGY-ERR:<kind>]` marker with a clear explanation, and the chat renders a readable banner with a Retry button (auto-retry for transient kinds, no spam for fatal ones like invalid API keys).
 * 🪂 **Subagent Safety Fallback:** if every model in a subagent tier fails (429 / 5xx), the in-flight failover loop walks the candidate chain, a per-model Circuit Breaker parks overheated models in a cooldown, and — as a last resort — the subagent is parked safely with its files and session state preserved instead of dying mid-task.
+* 🐤 **Compatibility Canary:** before patching, the toolkit fingerprints known anchors (`dist/preload.js`, `dist/main.js`, recipe regex anchors) and blocks the patch on an unrecognized Antigravity version; in a running app, a passive `!` HUD marker and the startup compat gate degrade UI gracefully instead of breaking it (layers: `silent` → `soft` → `hard`).
+* 🔤 **Alphabet-Aware Token Estimator:** a shared estimator distinguishes Cyrillic/Latin/CJK/mixed alphabets (Cyrillic ≈ +35% tokens/char) so the HUD context counter stays accurate for Russian-language chats instead of overestimating via a flat `chars / 3.5` ratio.
+* 🧯 **Fault Isolation:** every UI bundle (HUD, BYOK, Proxy, Account, Subagents) wraps its startup in an isolation guard — a failure in one customization never takes down the host app or sibling panels.
+* 💾 **Settings Backup:** `npm run backup:export` / `npm run backup:import` snapshots proxy / BYOK / subagent configs to `~/.gemini/antigravity/backups/` for one-command recovery after a corrupted update.
 
 ---
 
@@ -155,6 +159,21 @@ Run the interactive launcher from the project root:
 2. **Status check:** shows current state (`[Original]` / `[Patched]`) and validates version (`[v2.14.0 ✓]`).
 3. **Safe backup:** automatically saves a clean backup as `app.asar.agy_clean_orig.bak`.
 4. **Clean rollback:** menu item `2) Roll back to original` restores the app to its factory state with no trace of modifications.
+
+### 🩺 Diagnostics: doctor & patch telemetry
+```bash
+npm run doctor               # Installation health check: version, asar staleness, LS signatures, backups, LS patch
+npm run patch:telemetry      # 30-day patch health summary (exit 0/1/2)
+npm run patch:telemetry -- 7 # Custom window in days
+```
+* **Compatibility Canary:** before patching, signature checks run against `dist/preload.js`, `dist/main.js`, and recipe anchors; an incompatible Google version halts the patch and degrades UI passively (marked with `!` on HUD).
+* **Patch Telemetry:** recorded strictly locally (`~/.gemini/antigravity/agy-telemetry/patch_events.jsonl`, permissions 0600/0700, 1 MB rotation, paths redacted) — zero external network telemetry.
+
+### 🧪 Live Verification with Test Instance
+```bash
+npm run test-instance        # Isolated test instance in /tmp alongside your main installation
+```
+* Isolated `userData` (`~/.config/Antigravity-Test`), separate language server (`antigravity-test`), and safe isolation — no risk to your daily workspace or credentials.
 
 ---
 

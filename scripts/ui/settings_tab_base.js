@@ -356,19 +356,33 @@ class SettingsTabObserver {
 
         this.onStartPre();
 
-        this.observer = new MutationObserver(() => {
+        // Fault isolation (roadmap #4): observer callback + rAF tick are
+        // guarded — a throw inside checkAndInject() of ANY custom tab
+        // degrades to a skipped tick instead of killing the mutation
+        // pipeline for the whole settings modal (incl. native tabs).
+        const _fi = (typeof AgyFaultIsolation !== "undefined") ? AgyFaultIsolation : null;
+        const _guard = (_fi && typeof _fi.guard === "function") ? _fi.guard : (m, t, fn) => fn;
+        const _tag = this.constructor && this.constructor.name ? this.constructor.name : "SettingsTab";
+
+        this.observer = new MutationObserver(_guard(_tag, "observer-cb", () => {
             if (!this.scheduledCheck) {
                 this.scheduledCheck = true;
-                this._rafId = requestAnimationFrame(() => {
+                this._rafId = requestAnimationFrame(_guard(_tag, "rAF-check", () => {
                     this.scheduledCheck = false;
                     this._rafId = null;
                     this.checkAndInject();
-                });
+                }));
             }
-        });
+        }));
 
         this.observer.observe(document.body, { childList: true, subtree: true });
-        this.checkAndInject();
+        try {
+            this.checkAndInject();
+        } catch (err) {
+            if (_fi && typeof _fi._logFault === "undefined") {
+                console.error("[agy:" + _tag + "] fault in initial checkAndInject (isolated):", err);
+            }
+        }
 
         this.onStartPost();
     }

@@ -22,9 +22,14 @@ class LinuxCredentialStore extends CredentialStore {
             if (pathsModule && pathsModule.getLinuxTokenPaths) {
                 return pathsModule.getLinuxTokenPaths();
             }
-            const primary = path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token');
+            const home = process.env.HOME || os.homedir();
+            const primary = path.join(home, '.gemini', 'jetski-standalone-oauth-token');
             return fs.existsSync(primary) ? [primary] : [];
         });
+    }
+
+    _getHomeDir() {
+        return process.env.HOME || os.homedir();
     }
 
     /**
@@ -158,7 +163,7 @@ except Exception:
         // language_server accesses keyring directly via /run/user/{uid}/keyring/ socket
         // bypassing dbus-run-session isolation → causes cross-profile token pollution.
         // File-based tokens are the sole source of truth.
-        const primary = path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token');
+        const primary = path.join(this._getHomeDir(), '.gemini', 'jetski-standalone-oauth-token');
         if (fs.existsSync(primary)) {
             try {
                 const content = fs.readFileSync(primary, 'utf8').trim();
@@ -172,7 +177,7 @@ except Exception:
         if (!secretString) return false;
         let primaryOk = false;
         try {
-            const targetPath = path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token');
+            const targetPath = path.join(this._getHomeDir(), '.gemini', 'jetski-standalone-oauth-token');
             const parentDir = path.dirname(targetPath);
             if (!fs.existsSync(parentDir)) {
                 fs.mkdirSync(parentDir, { recursive: true, mode: 0o700 });
@@ -193,7 +198,7 @@ except Exception:
 
     delete() {
         let deleted = false;
-        const targetPath = path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token');
+        const targetPath = path.join(this._getHomeDir(), '.gemini', 'jetski-standalone-oauth-token');
         try {
             if (fs.existsSync(targetPath)) {
                 fs.rmSync(targetPath, { force: true });

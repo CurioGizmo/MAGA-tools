@@ -98,6 +98,19 @@ function buildByokModelList(controller, isFormOpen) {
                 ? `<span title="${_t('byok.compaction_title', 'Context compaction threshold')}">${m.compactionThreshold.toLocaleString(_numLocale())} ${_t('byok.compaction_suffix', 'compact')}</span>`
                 : `<span title="${_t('byok.compaction_title', 'Context compaction threshold')}">${_t('byok.compaction_auto', { percent: curMaxTokens <= 262144 ? '50' : '25' }, `auto (${curMaxTokens <= 262144 ? '50' : '25'}%) compact`)}</span>`;
 
+            // Roadmap item 5: passive monthly usage/cost line (no actions — Rule 8)
+            const costStat = controller.costStats && controller.costStats.models ? controller.costStats.models[m.id] : null;
+            const monthLabel = controller.costStats && controller.costStats.month ? controller.costStats.month : '';
+            const costHtml = costStat && costStat.requests > 0
+                ? `<div class="text-[11px] text-muted-foreground/90 mt-0.5" title="${_t('byok.cost_title', 'Usage this month (tracked by maga)')}">
+                       <span>📊 ${_t('byok.cost_month', { month: monthLabel }, `Month ${monthLabel}`)}:
+                       ${(costStat.requests).toLocaleString(_numLocale())} ${_t('byok.cost_reqs', 'req')}
+                       · ${((costStat.prompt + costStat.cached + costStat.output) / 1000).toFixed(1)}k ${_t('byok.cost_tokens_suffix', 'tok')}
+                       ${typeof costStat.cost === 'number' && costStat.cost > 0 ? `· ~$${costStat.cost.toFixed(2)}` : ''}
+                       </span>
+                   </div>`
+                : '';
+
             meta.innerHTML = `
                 <div class="flex items-center justify-between gap-2">
                     <span class="truncate">ID: <code class="bg-muted px-1.5 py-0.5 rounded text-foreground font-mono text-[11px]">${m.modelName || '-'}</code></span>
@@ -114,6 +127,7 @@ function buildByokModelList(controller, isFormOpen) {
                     ${m.supportsImages ? '<span title="Vision" class="text-primary font-medium">🖼️ Vision</span>' : ''}
                     ${m.routeViaProxy === false ? `<span title="Direct route" class="text-amber-500 font-medium">${_t('byok.ignore_proxy', '🚫 direct')}</span>` : ''}
                 </div>
+                ${costHtml}
             `;
 
             // Test result pill if available

@@ -15,6 +15,7 @@ const reasoningCatalog = require('./reasoning_catalog');
 const { registerConfigIpcHandlers } = require('./ipc_config_handlers');
 const { registerModelIpcHandlers } = require('./ipc_model_handlers');
 const { registerSubagentIpcHandlers } = require('./ipc_subagent_handlers');
+const { registerCostIpcHandlers } = require('./ipc_cost_handlers');
 
 function registerByokIpc(ipcMain) {
     if (!ipcMain) return;
@@ -46,6 +47,7 @@ function registerByokIpc(ipcMain) {
     registerConfigIpcHandlers(ipcMain, ctx);
     registerModelIpcHandlers(ipcMain, ctx);
     registerSubagentIpcHandlers(ipcMain, ctx);
+    registerCostIpcHandlers(ipcMain, ctx);
 
     console.log('[BYOK IPC] Registered agy:byok:* and agy:subagents:* IPC handlers successfully');
 }

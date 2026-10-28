@@ -55,6 +55,7 @@ class HudDomBuilder {
 
     this.hudEl.onmouseenter = () => {
       if (this.hideTimer) clearTimeout(this.hideTimer);
+      this.tooltipVisible = true; // E-fix: gate for tooltip rendering
       const rect = this.hudEl.getBoundingClientRect();
       if (this.tooltipEl) {
         this.tooltipEl.style.left = Math.max(10, Math.min(rect.left, window.innerWidth - 380)) + 'px';
@@ -65,6 +66,7 @@ class HudDomBuilder {
 
     this.hudEl.onmouseleave = () => {
       this.hideTimer = setTimeout(() => {
+        this.tooltipVisible = false; // E-fix: gate for tooltip rendering
         if (this.tooltipEl) this.tooltipEl.classList.remove('visible');
       }, 200);
     };
@@ -217,6 +219,13 @@ class HudDomBuilder {
       <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding-top: 2px;">
         <span class="agy-tip-label">${_t('hud.tip.session_label', 'Session usage:')}</span>
         <span id="agy-tip-session" class="agy-tip-val">${_t('hud.tip.session_zero', { n: 0 }, '{n} tokens')}</span>
+        <span id="agy-tip-session-detail" style="display: none;">
+          <span class="agy-tip-label">${_t('hud.stat.input', 'in')}:</span> <b id="agy-sv-in" class="agy-tip-val"></b>
+          <span style="color: var(--agy-tip-sep); opacity: 0.7;">/</span>
+          <span class="agy-tip-label" style="color: var(--agy-sv-cache, #38bdf8);">cache:</span> <b id="agy-sv-cache" class="agy-tip-val"></b>
+          <span style="color: var(--agy-tip-sep); opacity: 0.7;">/</span>
+          <span class="agy-tip-label" style="color: var(--agy-sv-out, #a78bfa);">${_t('hud.stat.output', 'out')}:</span> <b id="agy-sv-out" class="agy-tip-val"></b>
+        </span>
       </div>
     `;
 
@@ -241,6 +250,11 @@ class HudDomBuilder {
     this.tipRefs.gridCaption = document.getElementById('agy-tip-grid-caption');
 
     this.tipRefs.session = document.getElementById('agy-tip-session');
+    // Rule 4 refs: session detail sub-spans for point updates (no innerHTML in timers)
+    this.tipRefs.sessionDetail = document.getElementById('agy-tip-session-detail');
+    this.tipRefs.sessionIn = document.getElementById('agy-sv-in');
+    this.tipRefs.sessionCache = document.getElementById('agy-sv-cache');
+    this.tipRefs.sessionOut = document.getElementById('agy-sv-out');
   }
 }
 

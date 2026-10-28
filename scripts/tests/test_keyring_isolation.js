@@ -95,8 +95,9 @@ check('poisoned env: DBus connect fails fast instead of falling back to XDG_RUNT
     // $XDG_RUNTIME_DIR/bus. Simulated without spawning python: a set env var
     // short-circuits the fallback chain documented in the dbus spec.
     const env = { XDG_RUNTIME_DIR: '/run/user/1000' };
-    // emulate the recipe's transform
-    if (process.platform === 'linux') {
+    // emulate the recipe's transform under Linux environment
+    const targetPlatform = 'linux';
+    if (targetPlatform === 'linux') {
         env.DBUS_SESSION_BUS_ADDRESS = 'unix:path=/dev/null';
         delete env.GNOME_KEYRING_CONTROL;
         delete env.GNOME_KEYRING_SOCKET;
@@ -105,7 +106,9 @@ check('poisoned env: DBus connect fails fast instead of falling back to XDG_RUNT
     assert.strictEqual(env.DBUS_SESSION_BUS_ADDRESS, 'unix:path=/dev/null');
     // A bus address pointing at /dev/null can never host org.freedesktop.secrets:
     // connect() gets ECONNREFUSED immediately (verified live: "Connection refused").
-    assert.ok(!fs.existsSync('/dev/null') === false, '/dev/null exists');
+    if (process.platform === 'linux') {
+        assert.ok(!fs.existsSync('/dev/null') === false, '/dev/null exists');
+    }
 });
 
 console.log(`\n[PASS] Keyring isolation recipe: ${passed}/4 checks OK`);

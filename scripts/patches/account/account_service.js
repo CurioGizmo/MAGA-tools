@@ -11,6 +11,19 @@ const { parseAccountProfile } = require('./profile_parser');
 
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
+/**
+ * S7-fix: central secret masker for logs and error messages of the account
+ * module. Redacts JWT-like tokens, long base64/hex blobs and OAuth fragments
+ * before any console output or thrown Error text.
+ */
+function maskSecrets(text) {
+    if (typeof text !== 'string') return text;
+    return text
+        .replace(/eyJ[A-Za-z0-9_-]{10,}(\.[A-Za-z0-9_-]{10,}){1,2}/g, '***JWT***')
+        .replace(/\b[A-Za-z0-9+/_-]{32,}\b/g, '***TOKEN***')
+        .replace(/ya29\.[A-Za-z0-9_-]+/g, '***ya29***');
+}
+
 class AccountService {
     constructor(options = {}) {
         this.options = options;
@@ -18,11 +31,13 @@ class AccountService {
         this.store = options.store || getCredentialStore(options.platform, options);
         this.repo = options.repo || new ProfileRepository(options);
         this.parseAccountProfileFn = options.parseAccountProfile || parseAccountProfile;
+        this.maskSecrets = options.maskSecrets || maskSecrets;
     }
 
     validateEmail(email) {
         if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
-            throw new Error(`Invalid email address: ${email}`);
+            // S7-fix: raw user input must never reach logs unmasked
+            throw new Error(`Invalid email address: ${this.maskSecrets(String(email).slice(0, 80))}`);
         }
         return email.trim();
     }
@@ -74,6 +89,13 @@ class AccountService {
             const candidates = [
                 path.join(configBase, 'app_storage.json'),
             ];
+            if (process.platform === 'win32') {
+                const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+                candidates.push(
+                    path.join(appData, 'Antigravity', 'app_storage.json'),
+                    path.join(appData, 'Antigravity2', 'app_storage.json')
+                );
+            }
 
             for (const storagePath of candidates) {
                 if (!fs.existsSync(storagePath)) continue;
@@ -198,5 +220,6 @@ class AccountService {
 
 module.exports = {
     AccountService,
-    EMAIL_REGEX
+    EMAIL_REGEX,
+    maskSecrets
 };

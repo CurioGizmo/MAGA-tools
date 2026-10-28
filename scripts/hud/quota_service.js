@@ -6,6 +6,7 @@ class QuotaService {
     this.cachedCloudCodeService = null;
     this.isRefreshingQuotas = false;
     this.lastQuotaRefreshTime = 0;
+    this._modelBtn = null; // C-fix: кэш кнопки модели (валиден, пока isConnected)
   }
 
   _findServiceInFiber(el) {
@@ -74,7 +75,6 @@ class QuotaService {
       state.resetInSeconds = 0;
     }
   }
-
   async refreshLiveQuotas(state, renderFn, force = false) {
     const now = Date.now();
     if (!force && now - this.lastQuotaRefreshTime < 5000) return;
@@ -89,15 +89,12 @@ class QuotaService {
       if (typeof renderFn === 'function') renderFn();
 
       const p1 = typeof cloudCode.loadCodeAssist === 'function'
-        ? cloudCode.loadCodeAssist(null, undefined, true).catch(() => null)
-        : Promise.resolve(null);
+        ? cloudCode.loadCodeAssist(null, undefined, true).catch(() => null) : Promise.resolve(null);
       const p2 = typeof cloudCode.retrieveUserQuotaSummary === 'function'
-        ? cloudCode.retrieveUserQuotaSummary(null, true).catch(() => null)
-        : Promise.resolve(null);
+        ? cloudCode.retrieveUserQuotaSummary(null, true).catch(() => null) : Promise.resolve(null);
 
       const [, summaryRes] = await Promise.all([p1, p2]);
-      this.lastQuotaRefreshTime = Date.now();
-      state.lastQuotaRefreshTime = this.lastQuotaRefreshTime;
+      this.lastQuotaRefreshTime = state.lastQuotaRefreshTime = Date.now();
 
       if (summaryRes?.response?.groups) {
         state.quotaGroups = summaryRes.response.groups;
@@ -122,21 +119,26 @@ class QuotaService {
     }
   }
 
+  // C-fix: кэш кнопки; textContent (без reflow); валиден пока isConnected.
+  _getModelButton() {
+    if (this._modelBtn && this._modelBtn.isConnected) return this._modelBtn;
+    const all = Array.from(document.querySelectorAll('button'));
+    this._modelBtn = document.querySelector('[data-testid="model-selector-trigger"]') ||
+      all.find(b => (typeof b.className === 'string') && b.className.includes('hover:bg-secondary') &&
+        b.className.includes('text-xs') && /Gemini|Flash|Pro|Claude|GPT|BYOK/i.test(b.textContent)) ||
+      all.find(b => /Gemini|Flash|Pro|Claude|GPT|BYOK/i.test(b.textContent));
+    return this._modelBtn;
+  }
   updateModelAndQuota(state) {
     try {
       if (typeof document === 'undefined') return;
-
       const now = Date.now();
       const liveQ = (typeof window !== 'undefined' && window.agyBridge && typeof window.agyBridge.getLiveQuota === 'function')
         ? window.agyBridge.getLiveQuota()
         : null;
 
       let sm = null;
-      const btn = document.querySelector('[data-testid="model-selector-trigger"]') ||
-        Array.from(document.querySelectorAll('button')).find(b =>
-          b.className.includes('hover:bg-secondary') && b.className.includes('text-xs') &&
-          /Gemini|Flash|Pro|Claude|GPT|BYOK/i.test(b.innerText)
-        ) || Array.from(document.querySelectorAll('button')).find(b => /Gemini|Flash|Pro|Claude|GPT|BYOK/i.test(b.innerText));
+      const btn = this._getModelButton();
 
       if (btn) {
         const fKey = Object.keys(btn).find(k => k.startsWith('__reactFiber$'));
@@ -291,7 +293,6 @@ class QuotaService {
     }
   }
 }
-
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { QuotaService };
 }

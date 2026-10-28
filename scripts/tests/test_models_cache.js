@@ -51,9 +51,11 @@ async function run() {
         assert.strictEqual(saved, true, "Should save valid payload with native Google models");
         assert.strictEqual(fs.existsSync(cacheFile), true, "Cache file must exist on disk");
 
-        // Check file mode (0600)
-        const stat = fs.statSync(cacheFile);
-        assert.strictEqual(stat.mode & 0o777, 0o600, "Cache file permissions must be 0600");
+        // Check file mode (0600 on POSIX)
+        if (process.platform !== 'win32') {
+            const stat = fs.statSync(cacheFile);
+            assert.strictEqual(stat.mode & 0o777, 0o600, "Cache file permissions must be 0600");
+        }
 
         const loadedAlice = repo.load("alice@example.com");
         assert.ok(loadedAlice, "Must load payload for alice");

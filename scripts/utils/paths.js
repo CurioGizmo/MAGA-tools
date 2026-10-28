@@ -242,9 +242,25 @@ function getAllProfilesDirs() {
     return Array.from(dirs);
 }
 
+/**
+ * SSOT data directory for all maga persistent stores (proxy/BYOK/accounts).
+ * Env-gated for isolation:
+ *  - AGY_MAGA_DATA_DIR: explicit override (tests / CLI sandboxes)
+ *  - AGY_TEST_INSTANCE=1: isolated test-instance dir (~/.gemini/antigravity-test)
+ *    so live configs of the main install are NEVER touched by test runs.
+ * Fix for the proxy_config.json overwrite incident (2026-10-28).
+ */
+function getMagaDataDir() {
+    if (process.env.AGY_MAGA_DATA_DIR) return process.env.AGY_MAGA_DATA_DIR;
+    if (process.env.AGY_TEST_INSTANCE === '1') {
+        return path.join(os.homedir(), '.gemini', 'antigravity-test');
+    }
+    return path.join(os.homedir(), '.gemini', 'antigravity');
+}
+
 function getProfilesDir() {
     // Primary: prefer os.homedir() (where the running app writes)
-    const primary = path.join(os.homedir(), '.gemini', 'antigravity', 'profiles');
+    const primary = path.join(getMagaDataDir(), 'profiles');
     if (!fs.existsSync(primary)) {
         fs.mkdirSync(primary, { recursive: true });
     }
@@ -361,6 +377,7 @@ module.exports = {
     getSubagentConvIds,
     clearSubagentCache,
     getProfilesDir,
+    getMagaDataDir,
     getAllProfilesDirs,
     getRealUserHome,
     getLinuxTokenPaths,

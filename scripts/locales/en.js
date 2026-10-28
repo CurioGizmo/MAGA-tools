@@ -67,6 +67,8 @@ const AGY_LOCALE_EN = {
   'installer.version_warn_text': '    {text}',
   'installer.version_continue': '    Continue patching at your own risk? (y/N): ',
   'installer.version_cancelled': '[-] Patching cancelled by user.',
+  'installer.canary_risky': '[Canary] Compatibility: {level} (v{ver}) — patch blocked to avoid breaking the installation.',
+  'installer.canary_risky_reason': '[Canary] Version is not in the tested list or a critical anchor was lost. The patch will not be applied.',
   'installer.version_detect_failed': '[-] Warning: Could not determine the Antigravity version.',
   'installer.patch_cancelled': '[-] Patch cancelled: Antigravity is running.',
   'installer.rollback_cancelled': '[-] Rollback cancelled: Antigravity is running.',
@@ -296,6 +298,10 @@ const AGY_LOCALE_EN = {
   'byok.btn_delete': 'Delete',
   'byok.test_ok': '✓ Connection OK ({ms} ms)',
   'byok.test_err': '✗ Error: {error}',
+  'byok.cost_title': 'Usage this month (tracked by maga)',
+  'byok.cost_month': 'Month {month}',
+  'byok.cost_reqs': 'req',
+  'byok.cost_tokens_suffix': 'tok',
 
   // Prompt UI
   'prompt.title': 'Quick Commands',

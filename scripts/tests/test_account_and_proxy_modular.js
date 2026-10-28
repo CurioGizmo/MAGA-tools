@@ -221,8 +221,12 @@ assert.strictEqual(decodeJwtPayload('invalid_token'), null);
     fs.writeFileSync(otherTokenPath, 'OTHER_PROFILE_TOKEN', 'utf8');
 
     const origHome = process.env.HOME;
+    const origUserProfile = process.env.USERPROFILE;
     try {
         process.env.HOME = tmpHomeDir;
+        if (process.platform === 'win32') {
+            process.env.USERPROFILE = tmpHomeDir;
+        }
         const isolatedStore = new LinuxCredentialStore({
             getLinuxTokenPaths: () => [otherTokenPath]
         });
@@ -246,6 +250,9 @@ assert.strictEqual(decodeJwtPayload('invalid_token'), null);
         assert.strictEqual(fs.readFileSync(otherTokenPath, 'utf8'), 'OTHER_PROFILE_TOKEN');
     } finally {
         process.env.HOME = origHome;
+        if (process.platform === 'win32') {
+            process.env.USERPROFILE = origUserProfile;
+        }
         fs.rmSync(tmpHomeDir, { recursive: true, force: true });
         fs.rmSync(tmpOtherProfileDir, { recursive: true, force: true });
     }

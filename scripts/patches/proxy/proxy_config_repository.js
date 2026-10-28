@@ -26,13 +26,22 @@ class ProxyConfigRepository {
     }
 
     getDefaultConfigPath() {
-        const dir = path.join(os.homedir(), '.gemini', 'antigravity');
+        // Rule 3: env override first (tests / CLI sandboxes), then SSOT data dir.
+        // Isolation fix (2026-10-28): AGY_TEST_INSTANCE=1 routes to
+        // ~/.gemini/antigravity-test so test runs never touch the live config.
+        if (process.env.AGY_PROXY_CONFIG_PATH) return process.env.AGY_PROXY_CONFIG_PATH;
+        let magaDataDir;
         try {
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+            magaDataDir = require('../../utils/paths').getMagaDataDir();
+        } catch (e) {
+            magaDataDir = path.join(os.homedir(), '.gemini', 'antigravity');
+        }
+        try {
+            if (!fs.existsSync(magaDataDir)) {
+                fs.mkdirSync(magaDataDir, { recursive: true, mode: 0o700 });
             }
         } catch (e) {}
-        return path.join(dir, 'proxy_config.json');
+        return path.join(magaDataDir, 'proxy_config.json');
     }
 
     load() {

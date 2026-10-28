@@ -1,5 +1,6 @@
-# CI: lint + автотесты. Автогенерируемые бандлы не хранятся в git —
-# собираются из исходников внутри job (префикс build:bundles в npm test).
+# CI: lint → build → параллельные группы тестов × Node 20/22.
+# Автогенерируемые бандлы не хранятся в git — собираются из исходников
+# внутри job build (см. npm run build:ui).
 name: CI
 
 on:
@@ -7,23 +8,151 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: true
 
 jobs:
-  verify:
+  # ======== Быстрые гейты: lint и сборка бандлов ========
+  lint:
+    name: Lint (ESLint)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - run: npm ci
+      - run: npm run lint
 
-      - name: Install dependencies
-        run: npm ci
+  build:
+    name: Build bundles + asar verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Сборка 8 UI-бандлов из исходников (бандлы не хранятся в git)
+      - name: Build UI bundles
+        run: npm run build:ui
+      - name: Verify patched asar integrity
+        run: npm run verify:asar
+      - name: Verify asar staleness logic
+        run: node scripts/tests/test_asar_staleness.js
 
-      - name: Lint (ESLint)
-        run: npm run lint
+  # ======== Матрица: параллельные группы тестов × Node 20/22 ========
+  test:
+    name: Tests (${{ matrix.group.name }}) — Node ${{ matrix.node }}
+    needs: [lint, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+        group:
+          - name: core
+            run: >-
+              node scripts/tests/test_syntax.js &&
+              node scripts/tests/test_circular_deps.js &&
+              node scripts/tests/test_ssot_integrity.js &&
+              node scripts/tests/test_i18n.js &&
+              node scripts/tests/test_i18n_key_coverage.js &&
+              node scripts/tests/test_phase1_regressions.js
+          - name: core-2
+            run: >-
+              node scripts/tests/test_session_tracker.js &&
+              node scripts/tests/test_isolation_and_cache.js &&
+              node scripts/tests/test_subagents_token_calc.js &&
+              node scripts/tests/test_alphabet_estimator.js
+          - name: hud
+            run: >-
+              node scripts/tests/test_hud_modular.js &&
+              node scripts/tests/test_restart_banner.js &&
+              node scripts/tests/test_prompt_chips.js &&
+              node scripts/tests/test_settings_tabs_switching.js &&
+              node scripts/tests/test_settings_tabs_multiversion.js
+          - name: account
+            run: >-
+              node scripts/tests/test_account_ui_modular.js &&
+              node scripts/tests/test_account_and_proxy_modular.js &&
+              node scripts/tests/test_account_lock.js
+          - name: proxy
+            run: >-
+              node scripts/tests/test_proxy_parser.js &&
+              node scripts/tests/test_proxy_tunnel.js &&
+              node scripts/tests/test_proxy_lifecycle.js &&
+              node scripts/tests/test_models_cache.js &&
+              node scripts/tests/test_auth_refresher.js &&
+              node scripts/tests/test_http_transport.js &&
+              node scripts/tests/test_network_resilience.js &&
+              node scripts/tests/test_error_catalog.js
+          - name: byok
+            run: >-
+              node scripts/tests/test_byok_translator.js &&
+              node scripts/tests/test_byok_cost_tracker.js &&
+              node scripts/tests/test_byok_repository.js &&
+              node scripts/tests/test_byok_routing.js &&
+              node scripts/tests/test_byok_chat_variants_ui.js &&
+              node scripts/tests/test_byok_trigger_freeze.js &&
+              node scripts/tests/test_byok_ui.js &&
+              node scripts/tests/test_quota_5h_byok.js &&
+              node scripts/tests/test_reasoning_catalog.js
+          - name: subagents
+            run: >-
+              node scripts/tests/test_subagent_ui.js &&
+              node scripts/tests/test_subagent_repository.js &&
+              node scripts/tests/test_subagent_hybrid_routing.js &&
+              node scripts/tests/test_subagent_fallback.js &&
+              node scripts/tests/test_subagent_ui_isolation.js &&
+              node scripts/tests/test_adaptive_retry.js
+          - name: patcher
+            run: >-
+              node scripts/tests/test_compaction_cap_patch.js &&
+              node scripts/tests/test_updater_recipe.js &&
+              node scripts/tests/test_process_manager.js &&
+              node scripts/tests/test_prelogin_selector.js &&
+              node scripts/tests/test_keyring_isolation.js &&
+              node scripts/tests/test_settings_backup.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Run test group
+        run: ${{ matrix.group.run }}
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.group.name }}-node${{ matrix.node }}
+          path: /home/runner/.gemini/antigravity/*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
-      - name: Tests (with bundle rebuild)
-        run: npm test
+  # ======== Сводный job для branch protection ========
+  ci-ok:
+    name: CI summary (required check)
+    if: always() && !cancelled()
+    needs: [lint, build, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Success summary
+        if: success()
+        run: echo "All CI jobs passed (lint, build, 8 test groups, Node 20/22)" >> $GITHUB_STEP_SUMMARY

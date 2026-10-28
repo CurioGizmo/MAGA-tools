@@ -22,14 +22,39 @@ class HudDomRenderer {
     const hudEl = domBuilder.ensureElements(callbacks);
     if (!hudEl) return;
 
+    // Roadmap #2: re-apply canary degradation badge after ensureElements
+    // (survives DOM rebuilds); passive text marker only (Rule 8).
+    try {
+      if (state && state.canaryLevel && state.canaryLevel !== 'full' &&
+          (typeof window !== 'undefined') && window.AgyStartupGate) {
+        window.AgyStartupGate.applyHudBadge(hudEl, state.canaryLevel);
+      }
+    } catch (_) { /* best-effort */ }
+
     const tooltipEl = domBuilder.tooltipEl;
     const pillRefs = domBuilder.pillRefs;
-    const tipRefs = domBuilder.tipRefs;
     const isCollapsed = callbacks.isCollapsed ? callbacks.isCollapsed() : false;
 
     const isLight = typeof HudTheme !== 'undefined' ? HudTheme.isLightTheme() : false;
     if (hudEl) hudEl.classList.toggle('agy-theme-light', isLight);
     if (tooltipEl) tooltipEl.classList.toggle('agy-theme-light', isLight);
+
+    // E-fix: tooltip rendering gate — тяжёлые tooltip-обновления только
+    // при видимой карточке (hover); в скрытом состоянии — отложенный
+    // idle-рендер, не конкурирующий со стримингом чата.
+    // Фоллбэк: если requestIdleCallback недоступен (Node-тесты, старые
+    // Chromium) — рендерим tooltip синхронно, как раньше.
+    const tooltipVisible = domBuilder.tooltipVisible === true ||
+      (tooltipEl && typeof tooltipEl.classList.contains === 'function' && tooltipEl.classList.contains('visible'));
+    if (tooltipVisible || typeof requestIdleCallback !== 'function') {
+      HudDomRenderer._renderTooltip(state, domBuilder, isLight, isCollapsed);
+    } else if (!HudDomRenderer._idleScheduled) {
+      HudDomRenderer._idleScheduled = true;
+      requestIdleCallback(() => {
+        HudDomRenderer._idleScheduled = false;
+        HudDomRenderer._renderTooltip(state, domBuilder, isLight, isCollapsed);
+      }, { timeout: 2000 });
+    }
 
     const ctxPercent = Math.round((state.contextTokens / (state.maxContext || 1000000)) * 100);
     const quotaPercent = Math.round(state.remainingFraction);
@@ -64,7 +89,29 @@ class HudDomRenderer {
       pillRefs.quotaSpin.className = state.isRefreshingQuota ? 'agy-spinning' : '';
     }
 
-    // 2. Update Tooltip elements
+    // 2. Update Tooltip elements — handled by the visibility gate above.
+    return; // pill rendered above; tooltip path handled by gate
+  }
+
+  /**
+   * E-fix: рендер тултипа вынесен в отдельный метод — вызывается либо
+   * синхронно при видимой карточке, либо из requestIdleCallback.
+   */
+  static _renderTooltip(state, domBuilder, isLight, isCollapsed) {
+    const tooltipEl = domBuilder.tooltipEl;
+    const tipRefs = domBuilder.tipRefs;
+    if (!tipRefs) return;
+    if (tooltipEl && typeof tooltipEl.classList !== 'undefined' && typeof tooltipEl.classList.toggle === 'function') {
+      tooltipEl.classList.toggle('agy-theme-light', isLight);
+    }
+
+    const ctxPercent = Math.round((state.contextTokens / (state.maxContext || 1000000)) * 100);
+    const quotaPercent = Math.round(state.remainingFraction);
+    const ctxColor = typeof HudTheme !== 'undefined' ? HudTheme.getGentleColor(ctxPercent, false) : '#86efac';
+    const quotaColor = typeof HudTheme !== 'undefined' ? HudTheme.getGentleColor(quotaPercent, true) : '#7dd3fc';
+    const timeStr = typeof HudFormatters !== 'undefined' ? HudFormatters.formatTime(state.resetInSeconds) : `${state.resetInSeconds}s`;
+    const tokenDisplay = typeof HudFormatters !== 'undefined' ? HudFormatters.formatTokens(state.contextTokens) : String(state.contextTokens);
+
     if (tipRefs.resetLabel) {
       tipRefs.resetLabel.textContent = state.isByok
         ? `${_t('hud.quota_prefix', 'Quota')} (Google):`
@@ -90,9 +137,15 @@ class HudDomRenderer {
       if (state.isByok) {
         tipRefs.resetTime.textContent = 'BYOK (external)';
       } else {
-        const resetUtc = state.resetTimestamp
-          ? new Date(state.resetTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
-          : '';
+        // G-fix: мемоизация UTC-строки по timestamp (toLocaleTimeString
+        // на каждом рендере — лишний Intl-вызов)
+        if (HudDomRenderer._utcCacheTs !== state.resetTimestamp) {
+          HudDomRenderer._utcCacheTs = state.resetTimestamp;
+          HudDomRenderer._utcCacheStr = state.resetTimestamp
+            ? new Date(state.resetTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' UTC'
+            : '';
+        }
+        const resetUtc = HudDomRenderer._utcCacheStr;
         tipRefs.resetTime.textContent = state.resetInSeconds > 0
           ? `${timeStr} ${resetUtc ? `(${resetUtc})` : ''}`
           : `0s ${resetUtc ? `(${resetUtc})` : ''}`;
@@ -167,15 +220,18 @@ class HudDomRenderer {
 
     // Session Statistics
     if (tipRefs.session) {
-      const cacheColor = isLight ? '#1d4ed8' : '#38bdf8';
-      const outColor = isLight ? '#7c3aed' : '#a78bfa';
       const numLoc = _numLocale();
       if (state.sessionPrompt > 0 || state.sessionOutput > 0 || state.sessionCached > 0) {
         const effectiveCache = state.sessionCached || 0;
-        const inFmt = HudFormatters.formatTokens(state.sessionPrompt);
-        const outFmt = HudFormatters.formatTokens(state.sessionOutput);
-        const cacheFmt = HudFormatters.formatTokens(effectiveCache);
-        tipRefs.session.innerHTML = `${_t('hud.stat.input', 'in')}: <b>${inFmt}</b> <span style="color: var(--agy-tip-sep); opacity: 0.7;">/</span> <span style="color: ${cacheColor};">cache: <b>${cacheFmt}</b></span> <span style="color: var(--agy-tip-sep); opacity: 0.7;">/</span> <span style="color: ${outColor};">${_t('hud.stat.output', 'out')}: <b>${outFmt}</b></span>`;
+        // Rule 4: точечные textContent-обновления вместо innerHTML в таймерах.
+        // Структура (spans) строится один раз в dom_builder; здесь — только значения.
+        if (tipRefs.sessionIn) tipRefs.sessionIn.textContent = HudFormatters.formatTokens(state.sessionPrompt);
+        if (tipRefs.sessionCache) tipRefs.sessionCache.textContent = HudFormatters.formatTokens(effectiveCache);
+        if (tipRefs.sessionOut) tipRefs.sessionOut.textContent = HudFormatters.formatTokens(state.sessionOutput);
+        if (tipRefs.sessionDetail) {
+          tipRefs.sessionDetail.style.display = 'inline';
+          if (tipRefs.session.style) tipRefs.session.style.display = 'none';
+        }
         const totalIn = state.sessionPrompt + effectiveCache;
         const cachePct = totalIn > 0 ? Math.round((effectiveCache / totalIn) * 100) : 0;
         const thinkSess = state.sessionThoughts || (state.sessionCandidates ? Math.max(0, state.sessionOutput - state.sessionCandidates) : Math.round(state.sessionOutput * 0.85));
@@ -199,15 +255,23 @@ class HudDomRenderer {
           '\n' + _t('hud.session.tooltip_output', { n: state.sessionOutput.toLocaleString(numLoc), think: HudFormatters.formatTokens(thinkSess), text: HudFormatters.formatTokens(respSess) }, '• Output: {n} tokens (thinking: ~{think} / text: ~{text})') +
           subInfo + globalExtra;
       } else if (state.sessionDelta > 0) {
-        const inFmt = HudFormatters.formatTokens(state.sessionPromptDelta);
-        const outFmt = HudFormatters.formatTokens(state.sessionOutputDelta);
-        tipRefs.session.innerHTML = `${_t('hud.stat.input', 'in')}: <b>${inFmt}</b> <span style="color: var(--agy-tip-sep); opacity: 0.7;">/</span> <span style="color: ${outColor};">${_t('hud.stat.output', 'out')}: <b>${outFmt}</b></span>`;
+        if (tipRefs.sessionIn) tipRefs.sessionIn.textContent = HudFormatters.formatTokens(state.sessionPromptDelta);
+        if (tipRefs.sessionCache) tipRefs.sessionCache.textContent = '';
+        if (tipRefs.sessionOut) tipRefs.sessionOut.textContent = HudFormatters.formatTokens(state.sessionOutputDelta);
+        if (tipRefs.sessionDetail) {
+          tipRefs.sessionDetail.style.display = 'inline';
+          if (tipRefs.session.style) tipRefs.session.style.display = 'none';
+        }
         const subNote = (state.subagents && state.subagents.count > 0)
           ? _t('hud.session.delta_subagents', { n: state.subagents.count }, ' + {n} subagents')
           : '';
         tipRefs.session.title = _t('hud.session.delta_title', 'Session delta') + subNote;
       } else {
-        tipRefs.session.innerHTML = `0 tokens <span style="color: var(--agy-tip-muted); font-weight: 400;">(${_t('hud.session_prefix', 'new session')})</span>`;
+        if (tipRefs.sessionDetail) tipRefs.sessionDetail.style.display = 'none';
+        if (tipRefs.session) {
+          if (tipRefs.session.style) tipRefs.session.style.display = '';
+          tipRefs.session.textContent = _t('hud.tip.session_zero', { n: 0 }, '{n} tokens');
+        }
         tipRefs.session.title = _t('hud.session_prefix', 'Session');
       }
     }

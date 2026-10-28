@@ -13,6 +13,7 @@ function bundlePromptUi(targetFile = null) {
     const moduleOrder = [
     path.resolve(__dirname, '../locales/t_helper.js'),
     path.resolve(__dirname, '../ui/style_injector.js'),
+    path.resolve(__dirname, '../ui/fault_isolation.js'),
     path.resolve(__dirname, '../ui/settings_tab_base.js'),
     path.resolve(__dirname, '../ui/num_locale.js'),
         'prompt_repository.js',

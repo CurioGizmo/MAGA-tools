@@ -136,7 +136,10 @@ async function main() {
 
         // 4. Apply patches
         console.log('[+] Applying patcher modifications...');
-        patchDirectory(buildDir);
+        const allApplied = patchDirectory(buildDir);
+        if (!allApplied) {
+            console.log('[!] PARTIAL BUILD: some recipes failed to apply (version drift).');
+        }
 
         // 5. Pack asar (with unpack-dir to keep native modules external)
         console.log(`[+] Repacking to ${tempPatched}...`);

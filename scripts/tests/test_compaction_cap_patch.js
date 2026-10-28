@@ -18,37 +18,71 @@ const {
     SIG_HALF_PATCH_2
 } = require('../patcher/binaries/compaction_cap_patch');
 
+/**
+ * Synthetic binary builder for different instruction profiles.
+ * profiles:
+ *  - 'legacy' (2.14-2.17): site0 esi + site1 + site2a + site2b
+ *  - 'modern' (2.18-2.22): site0 edi + site1 + site2a + site2b
+ *  - 'v223'   (2.23-2.25): site0 cmovg ebx + site2a (256k) + site3 (sub-branch)
+ *  - 'v226'   (2.26+):     site0 cmovg rsi/edi + site3 (sub-branch)
+ */
 function buildSyntheticBinary(profileName = 'legacy') {
-    // profileName: 'legacy' (2.14-2.17) or 'modern' (2.18-2.19+)
-    const variantIndex = profileName === 'legacy' ? 0 : 1;
     const pieces = [];
 
     // Header padding
     pieces.push(Buffer.alloc(512, 0x90));
 
-    // Site 0
-    const s0 = PATCH_SITES[0].variants[variantIndex];
-    pieces.push(s0.original);
-    pieces.push(Buffer.alloc(256, 0xcc));
+    const variantByName = (site, name) => {
+        const v = site.variants.find((x) => x.name === name);
+        if (!v) throw new Error(`variant ${name} not found for ${site.id}`);
+        return v;
+    };
 
-    // Site 1
-    const s1 = PATCH_SITES[1].variants[variantIndex];
-    pieces.push(s1.original);
-    pieces.push(Buffer.alloc(256, 0xcc));
+    let expectedSites = [];
+    const pushSite = (site, variantName) => {
+        const v = variantByName(site, variantName);
+        pieces.push(v.original);
+        pieces.push(Buffer.alloc(256, 0xcc));
+        expectedSites.push(v);
+    };
 
-    // Site 2a
-    const s2a = PATCH_SITES[2].variants[variantIndex];
-    pieces.push(s2a.original);
-    pieces.push(Buffer.alloc(256, 0xcc));
+    if (profileName === 'v226') {
+        pushSite(PATCH_SITES[0], 'cmovg rsi/edi (2.26.0+)');
+        pushSite(PATCH_SITES[4], 'cmovg sub-branch (2.23.0+)');
+    } else if (profileName === 'v223') {
+        pushSite(PATCH_SITES[0], 'cmovg ebx (2.23.0-2.25.0)');
+        pushSite(PATCH_SITES[2], '256k (2.18.1+)'); // site2a 256k survives in 2.25.0
+        pushSite(PATCH_SITES[4], 'cmovg sub-branch (2.23.0+)');
+    } else {
+        const variantIndex = profileName === 'legacy' ? 0 : 1;
+        const s0 = PATCH_SITES[0].variants[variantIndex];
+        pieces.push(s0.original);
+        pieces.push(Buffer.alloc(256, 0xcc));
+        expectedSites.push(s0);
 
-    // Site 2b (variant 0 for all versions)
-    const s2b = PATCH_SITES[3].variants[0];
-    pieces.push(s2b.original);
+        // Site 1
+        const s1 = PATCH_SITES[1].variants[variantIndex];
+        pieces.push(s1.original);
+        pieces.push(Buffer.alloc(256, 0xcc));
+        expectedSites.push(s1);
+
+        // Site 2a
+        const s2a = PATCH_SITES[2].variants[variantIndex];
+        pieces.push(s2a.original);
+        pieces.push(Buffer.alloc(256, 0xcc));
+        expectedSites.push(s2a);
+
+        // Site 2b (variant 0 for all versions)
+        const s2b = PATCH_SITES[3].variants[0];
+        pieces.push(s2b.original);
+        expectedSites.push(s2b);
+    }
+
     pieces.push(Buffer.alloc(512, 0x90));
 
     return {
         buffer: Buffer.concat(pieces),
-        variants: [s0, s1, s2a, s2b]
+        variants: expectedSites
     };
 }
 
@@ -57,7 +91,7 @@ function buildSyntheticBinary(profileName = 'legacy') {
 
     const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-compaction-patch-test-'));
     try {
-        const profiles = ['legacy', 'modern'];
+        const profiles = ['legacy', 'modern', 'v223', 'v226'];
 
         for (const profile of profiles) {
             console.log(`\n--- Testing Profile: ${profile.toUpperCase()} ---`);
@@ -207,6 +241,18 @@ function buildSyntheticBinary(profileName = 'legacy') {
         assert.strictEqual(SIG_HALF_PATCH_1.equals(PATCH_SITES[0].variants[0].halfPatches[0]), true);
         assert.strictEqual(SIG_HALF_PATCH_2.equals(PATCH_SITES[0].variants[0].halfPatches[1]), true);
         console.log('  [✓] Backward-compatibility aliases verified');
+
+        // 10. Testing profile detection
+        console.log('\n10. Testing binary profile detection (detectBinaryProfile)...');
+        const { detectBinaryProfile } = require('../patcher/binaries/compaction_cap_patch');
+        for (const profile of profiles) {
+            const { buffer: pBuf } = buildSyntheticBinary(profile);
+            const detected = detectBinaryProfile(pBuf);
+            assert.strictEqual(detected, profile, `profile ${profile} must be detected as ${profile}, got ${detected}`);
+            console.log(`  [✓] ${profile} detected correctly`);
+        }
+        assert.strictEqual(detectBinaryProfile(Buffer.alloc(2048, 0x00)), null, 'unknown binary must yield null profile');
+        console.log('  [✓] unknown binary yields null profile');
 
         console.log('\n=== ALL COMPACTION CAP BINARY PATCHER TESTS PASSED! ✓ ===');
     } finally {

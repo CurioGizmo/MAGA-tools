@@ -4,6 +4,7 @@
  * and fast buffer probe version extraction.
  */
 
+process.noAsar = true;
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');

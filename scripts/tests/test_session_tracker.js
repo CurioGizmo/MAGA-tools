@@ -162,4 +162,53 @@ if (sLegacy.session.inputTokens !== 5000) {
 }
 console.log('  [✓] Deserialization preserves exact values without synthetic multiplier (no 45k * 25!)');
 
+// =========================================================================
+// TEST 7: Calibration Hook (Roadmap #9)
+// =========================================================================
+console.log('\n--- Test 7: Calibration hook on stream end ---');
+const trackerCal = new SessionUsageTracker();
+const origRecord = require('../utils/token_calculator').recordCalibrationSample;
+let calibrationCalls = [];
+require('../utils/token_calculator').recordCalibrationSample = (modelId, chars, tokens) => {
+    calibrationCalls.push({ modelId, chars, tokens });
+    return origRecord ? false : false;
+};
+
+// No char evidence -> no calibration call
+trackerCal.recordTurn('chat_cal', { promptTokenCount: 100, candidatesTokenCount: 50 }, 'gemini-cal-test', true);
+if (calibrationCalls.length !== 0) {
+    console.error('[FAIL] Calibration fired without char evidence:', calibrationCalls);
+    process.exit(1);
+}
+// Intermediate frame (isStreamEnd=false) -> no calibration call
+trackerCal.recordCalibrationChars(350);
+trackerCal.recordTurn('chat_cal', { promptTokenCount: 200, candidatesTokenCount: 100 }, 'gemini-cal-test', false);
+if (calibrationCalls.length !== 0) {
+    console.error('[FAIL] Calibration fired on intermediate frame:', calibrationCalls);
+    process.exit(1);
+}
+// Stream end with pending chars -> exactly one calibration call, chars reset
+// (full usageMetadata incl. totalTokenCount, as Google reports on stream end)
+trackerCal.recordTurn('chat_cal', { promptTokenCount: 300, candidatesTokenCount: 150, totalTokenCount: 450 }, 'gemini-cal-test', true);
+if (calibrationCalls.length !== 1) {
+    console.error('[FAIL] Expected exactly one calibration call, got:', calibrationCalls.length);
+    process.exit(1);
+}
+if (calibrationCalls[0].modelId !== 'gemini-cal-test' || calibrationCalls[0].chars !== 350) {
+    console.error('[FAIL] Calibration call payload mismatch:', calibrationCalls[0]);
+    process.exit(1);
+}
+if (trackerCal._pendingCalibrationChars !== 0) {
+    console.error('[FAIL] Pending calibration chars must reset to 0');
+    process.exit(1);
+}
+// Next turn: chars consumed once (no double-fire)
+trackerCal.recordTurn('chat_cal', { promptTokenCount: 400, candidatesTokenCount: 200 }, 'gemini-cal-test', true);
+if (calibrationCalls.length !== 1) {
+    console.error('[FAIL] Calibration must not re-fire without new char evidence');
+    process.exit(1);
+}
+require('../utils/token_calculator').recordCalibrationSample = origRecord;
+console.log('  [✓] Calibration: gated on stream end + char evidence, fires once, resets pending');
+
 console.log('\nALL SESSION TRACKER TESTS PASSED SUCCESSFULLY! ✓\n');

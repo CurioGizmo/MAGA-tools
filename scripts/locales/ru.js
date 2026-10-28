@@ -67,6 +67,8 @@ const AGY_LOCALE_RU = {
   'installer.version_warn_text': '    {text}',
   'installer.version_continue': '    Продолжить применение патча на свой страх и риск? (y/N): ',
   'installer.version_cancelled': '[-] Применение патча отменено пользователем.',
+  'installer.canary_risky': '[Canary] Совместимость: {level} (v{ver}) — патч заблокирован во избежание поломки установки.',
+  'installer.canary_risky_reason': '[Canary] Версия не в списке протестированных или потерян критический якорь. Патч применён не будет.',
   'installer.version_detect_failed': '[-] Предупреждение: Не удалось определить версию Antigravity.',
   'installer.patch_cancelled': '[-] Применение патча отменено: процесс Antigravity запущен.',
   'installer.rollback_cancelled': '[-] Откат отменен: процесс Antigravity запущен.',
@@ -296,6 +298,10 @@ const AGY_LOCALE_RU = {
   'byok.btn_delete': 'Удалить',
   'byok.test_ok': '✓ Связь в норме ({ms} мс)',
   'byok.test_err': '✗ Ошибка: {error}',
+  'byok.cost_title': 'Использование за месяц (отслеживает maga)',
+  'byok.cost_month': 'Месяц {month}',
+  'byok.cost_reqs': 'запр.',
+  'byok.cost_tokens_suffix': 'ток.',
 
   // Prompt UI
   'prompt.title': 'Быстрые команды',

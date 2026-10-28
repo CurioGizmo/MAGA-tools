@@ -73,6 +73,21 @@ html.vscode-light .agy-hud-pill span,
   font-weight: 600 !important;
 }
 
+/* Roadmap #2: canary degradation badge — passive marker, no DOM text
+   mutations (Rule 4/8). Level set via data-agy-canary attribute. */
+.agy-hud-pill[data-agy-canary="risky"]::after,
+.agy-hud-pill[data-agy-canary="unknown"]::after {
+  content: " !";
+  font-weight: 700;
+  color: #f87171;
+}
+
+.agy-hud-pill[data-agy-canary="partial"]::after {
+  content: " ~";
+  font-weight: 700;
+  color: #fbbf24;
+}
+
 .agy-hud-pill.collapsed {
   padding: 2px 6px;
   gap: 4px;

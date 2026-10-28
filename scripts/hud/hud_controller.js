@@ -7,6 +7,32 @@ class HudController {
     this.domBuilder = new HudDomBuilder();
     this.quotaService = new QuotaService();
     this.cssContent = cssContent;
+    // Rule 4+: render coalescing state (rAF batching) and observer debounce
+    this._renderPending = false;
+    this._reattachTimer = null;
+  }
+
+  /**
+   * Rule 4+: коалесценция рендеров. Несколько источников (таймеры,
+   * коллбеки сервисов, observer) сливаются в один paint за кадр.
+   * Синхронный фоллбэк — для Node-автотестов (window/requestAnimationFrame undefined).
+   */
+  scheduleRender() {
+    if (this._renderPending) return;
+    this._renderPending = true;
+
+    const flush = () => {
+      this._renderPending = false;
+      this.render();
+    };
+
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(flush);
+    } else if (typeof setImmediate === 'function') {
+      setImmediate(flush);
+    } else {
+      flush();
+    }
   }
 
   static injectStyles(cssText) {
@@ -27,29 +53,32 @@ class HudController {
   }
 
   getCallbacks() {
-    return {
+    // F: кэш замыканий — аллокация 8 функций один раз, а не на каждый рендер
+    if (this._callbacksCache) return this._callbacksCache;
+    this._callbacksCache = {
       isCollapsed: () => HudState.isCollapsed(),
       isLightTheme: () => HudTheme.isLightTheme(),
       onReload: () => this.reloadTokensAndQuotas(),
       onTokenClick: () => {
-        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render(), true);
-        this.render();
+        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender(), true);
+        this.scheduleRender();
       },
       onQuotaClick: () => {
-        this.quotaService.refreshLiveQuotas(this.state, () => this.render(), true);
+        this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), true);
       },
       onToggleCollapse: () => {
         const next = !HudState.isCollapsed();
         HudState.setCollapsed(next);
         this.domBuilder.buildDOMStructure(this.getCallbacks());
-        this.render();
+        this.scheduleRender();
       },
       onHover: () => {
         if (Date.now() - this.quotaService.lastQuotaRefreshTime > 5000) {
-          this.quotaService.refreshLiveQuotas(this.state, () => this.render(), false);
+          this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), false);
         }
       }
     };
+    return this._callbacksCache;
   }
 
   render() {
@@ -58,9 +87,9 @@ class HudController {
 
   reloadTokensAndQuotas() {
     console.log('[HUD] Reloading tokens and quotas on user click...');
-    TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render(), true);
-    this.quotaService.refreshLiveQuotas(this.state, () => this.render(), true);
-    this.render();
+    TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender(), true);
+    this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), true);
+    this.scheduleRender();
   }
 
   setupNavigationListeners() {
@@ -68,12 +97,12 @@ class HudController {
 
     const handleNavChange = () => {
       setTimeout(() => {
-        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render());
-        this.render();
+        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender());
+        this.scheduleRender();
       }, 60);
       setTimeout(() => {
-        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render());
-        this.render();
+        TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender());
+        this.scheduleRender();
       }, 300);
     };
 
@@ -114,32 +143,36 @@ class HudController {
 
         if (diff <= 0 && this.state.remainingFraction < 99 && (Date.now() - this.quotaService.lastQuotaRefreshTime > 15000)) {
           console.log('[HUD] Quota reset reached, auto-fetching live quota for all models...');
-          this.quotaService.refreshLiveQuotas(this.state, () => this.render(), true);
+          this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), true);
         }
 
-        this.render();
+        this.scheduleRender();
       }
     }, 1000);
 
     // 1.5-second model & context poll
     setInterval(() => {
       this.quotaService.updateModelAndQuota(this.state);
-      TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render());
-      this.render();
+      TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender());
+      this.scheduleRender();
     }, 1500);
 
     // 120-second safety-net background quota refresh
     setInterval(() => {
-      this.quotaService.refreshLiveQuotas(this.state, () => this.render(), false);
+      this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), false);
     }, 120000);
 
-    // MutationObserver to reattach HUD if Electron wipes DOM
+    // MutationObserver to reattach HUD if Electron wipes DOM (debounced: D-fix)
     if (typeof document !== 'undefined' && document.body) {
       const observer = new MutationObserver(() => {
-        if (!document.getElementById('agy-token-hud')) {
-          this.domBuilder.ensureElements(this.getCallbacks());
-          this.render();
-        }
+        if (this._reattachTimer) return;
+        this._reattachTimer = setTimeout(() => {
+          this._reattachTimer = null;
+          if (!document.getElementById('agy-token-hud')) {
+            this.domBuilder.ensureElements(this.getCallbacks());
+            this.scheduleRender();
+          }
+        }, 500);
       });
       observer.observe(document.body, { childList: true, subtree: true });
     }
@@ -150,12 +183,12 @@ class HudController {
 
     window.__AGY_HUD_RENDER__ = () => {
       this.quotaService.updateModelAndQuota(this.state);
-      TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render());
-      this.render();
+      TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender());
+      this.scheduleRender();
     };
 
     window.__AGY_HUD_REFRESH_QUOTA__ = (force = true) => {
-      return this.quotaService.refreshLiveQuotas(this.state, () => this.render(), force);
+      return this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), force);
     };
 
     window.__AGY_HUD_STATE__ = this.state;
@@ -183,14 +216,23 @@ class HudController {
     this.setupTimersAndObservers();
     this.exposeGlobals();
 
+    // Roadmap #2: startup compat gate — level is stored on state here;
+    // the passive badge itself is re-applied by dom_renderer on every
+    // render (after ensureElements), so it survives DOM rebuilds and
+    // needs no init-time DOM access (hudEl does not exist yet at this point).
+    try {
+      if (this.state) this.state.canaryLevel =
+        (typeof window !== 'undefined' && window.__AGY_CANARY_LEVEL__) ? window.__AGY_CANARY_LEVEL__ : 'full';
+    } catch (_) { /* best-effort; HUD must never fail on it */ }
+
     // Initial boot
     this.quotaService.updateModelAndQuota(this.state);
-    TokenService.updateContextTokens(this.state, ConversationDetector, () => this.render());
-    this.render();
+    TokenService.updateContextTokens(this.state, ConversationDetector, () => this.scheduleRender());
+    this.scheduleRender();
 
     // Initial live quota sync after short delay
     setTimeout(() => {
-      this.quotaService.refreshLiveQuotas(this.state, () => this.render(), false);
+      this.quotaService.refreshLiveQuotas(this.state, () => this.scheduleRender(), false);
     }, 2000);
   }
 }

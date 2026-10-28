@@ -218,7 +218,11 @@ class ByokModelSync {
      */
     static _updateModelSelectorDivider(rootMenu = null) {
         if (typeof document === 'undefined') return;
-        const menu = rootMenu || document.querySelector('[role="menu"]:not([data-nested]):not(:has([data-testid="model-selector-effort-option"]))');
+        // Radix-era selector first, then Base UI (2.2x migration: menus carry
+        // data-rootownerid and no data-nested marker).
+        const menu = rootMenu ||
+            document.querySelector('[role="menu"]:not([data-nested]):not(:has([data-testid="model-selector-effort-option"]))') ||
+            document.querySelector('[role="menu"][data-rootownerid]:not([data-nested]), [role="menu"][data-base-ui-focusable]:not([data-nested])');
         if (!menu) return;
 
         const items = Array.from(menu.querySelectorAll('[role^="menuitem"]'));
@@ -314,7 +318,13 @@ class ByokModelSync {
                 // match when the whole subtree lands inside one node. Fallback:
                 // any element addition while a root menu is open (guarded by
                 // sawElementAdd to stay cheap during token streaming).
-                if (sawElementAdd && document.querySelector('[role="menu"]:not([data-nested])')) {
+                // Antigravity 2.2x migrated model selector from Radix to Base UI:
+                // menus now carry data-rootownerid / data-base-ui-focusable and
+                // no data-nested markers, so both signatures are probed here.
+                if (sawElementAdd && (
+                    document.querySelector('[role="menu"]:not([data-nested])') ||
+                    document.querySelector('[role="menu"][data-rootownerid], [role="menu"][data-base-ui-focusable]')
+                )) {
                     hasMenuMutation = true;
                 }
             }

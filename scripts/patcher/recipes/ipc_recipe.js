@@ -44,6 +44,13 @@ function applyIpcRecipe(targetDir) {
         console.log('  [+] Placed dist/agy_token_ipc.js (Native IPC Token Calculator)');
     }
 
+    // 4b. dist/canary_ipc.js: Canary State IPC (roadmap #2)
+    const canarySource = path.resolve(__dirname, '../../patches/canary_ipc.js');
+    if (fs.existsSync(canarySource)) {
+        fs.copyFileSync(canarySource, path.join(targetDir, 'dist', 'canary_ipc.js'));
+        console.log('  [+] Placed dist/canary_ipc.js (Canary State IPC)');
+    }
+
     // 5. dist/byok/: BYOK External Models & Translators
     const byokSrc = path.resolve(__dirname, '../../patches/byok');
     if (fs.existsSync(byokSrc)) {
@@ -55,7 +62,7 @@ function applyIpcRecipe(targetDir) {
     // 6. dist/ipcHandlers.js: Register IPC Handlers
     const ipcHandlersPath = path.join(targetDir, 'dist', 'ipcHandlers.js');
     patchFile(ipcHandlersPath, 'ipcHandlers.js (register agy token, account manager, proxy & byok IPC)', (content) => {
-        if (content.includes('registerAccountManagerIpc') && content.includes('registerAgyTokenIpc') && content.includes('registerProxyIpc') && content.includes('registerByokIpc')) {
+        if (content.includes('registerAccountManagerIpc') && content.includes('registerAgyTokenIpc') && content.includes('registerProxyIpc') && content.includes('registerByokIpc') && content.includes('registerCanaryIpc')) {
             return { alreadyPatched: true };
         }
 
@@ -115,6 +122,14 @@ function applyIpcRecipe(targetDir) {
         }
     } catch (e) {
         console.error('[Patch] Failed to register byok IPC:', e);
+    }
+    try {
+        const { registerCanaryIpc } = require('./canary_ipc');
+        if (registerCanaryIpc) {
+            registerCanaryIpc(electron_1.ipcMain);
+        }
+    } catch (e) {
+        console.error('[Patch] Failed to register canary IPC:', e);
     }
 `;
 

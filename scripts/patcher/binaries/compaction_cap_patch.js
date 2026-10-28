@@ -5,19 +5,22 @@
  *
  * Replaces hardcoded compaction limits across all cortex checkpointing code:
  *  - Site 0: GetDefaultCheckpointConfigForModel threshold clamp (50,000 -> 1,000,000)
- *            [esi form for 2.14.0-2.17.x, edi form for 2.18.1+]
+ *            [esi form for 2.14.0-2.17.x, edi form for 2.18.1+,
+ *             cmovg 40k forms for 2.23.0-2.25.0 (ebx) and 2.26.0+ (rsi/edi)]
  *  - Site 1: GetCheckpointConfig fallback overwrite when maxTokens <= 0 (128k/256k & 50k -> 1,000,000)
- *            [128k form for 2.14.0-2.17.x, 256k form for 2.18.1+]
+ *            [128k form for 2.14.0-2.17.x, 256k form for 2.18.1+; absent since 2.23.0]
  *  - Site 2a: GetCheckpointConfig branch 1 threshold clamp (128k/256k -> 1,000,000)
- *            [128k form for 2.14.0-2.17.x, 256k form for 2.18.1+]
+ *            [128k form for 2.14.0-2.17.x, 256k form for 2.18.1+; absent since 2.23.0]
  *  - Site 2b: GetCheckpointConfig branch 1 MaxTokenLimit cap (50,000 -> 1,000,000)
- *            [identical across all versions 2.14.0-2.19.1]
+ *            [identical across all versions 2.14.0-2.19.1; absent since 2.23.0]
+ *  - Site 3: subtraction branch threshold (40,000 -> 1,000,000) [2.23.0+, optional:
+ *            not required for SUCCESS, patched when present for consistency]
  *
  * Rules:
  *  - Rule 3: Dynamic path resolution via paths.js
  *  - Rule 5: Standardized status reporting (SUCCESS, ALREADY_PATCHED, TARGET_NOT_FOUND, CORRUPTED)
  *  - Rule 7: Automatic language_server.agybak backup
- *  - Rule 10: Documented patch sites and offsets
+ *  - Rule 10: Research recorded in scripts/research/CONTEXT_SIZE_MISMATCH.md
  *  - Rule 11: Non-kill process check (friendly warning if Antigravity is running)
  */
 
@@ -48,6 +51,24 @@ const PATCH_SITES = [
                 halfPatches: [
                     Buffer.from('81fa40420f00bf50c300000f42fa', 'hex'),
                     Buffer.from('81fa50c30000bf40420f000f42fa', 'hex')
+                ]
+            },
+            {
+                name: 'cmovg ebx (2.23.0-2.25.0)',
+                original: Buffer.from('4881fa409c0000bb409c00004 80f4fda'.replace(/ /g, ''), 'hex'),
+                patched:  Buffer.from('4881fa40420f00bb40420f004 80f4fda'.replace(/ /g, ''), 'hex'),
+                halfPatches: [
+                    Buffer.from('4881fa40420f00bb409c00004 80f4fda'.replace(/ /g, ''), 'hex'),
+                    Buffer.from('4881fa409c0000bb40420f004 80f4fda'.replace(/ /g, ''), 'hex')
+                ]
+            },
+            {
+                name: 'cmovg rsi/edi (2.26.0+)',
+                original: Buffer.from('4881fe409c0000bf409c00004 80f4ffe'.replace(/ /g, ''), 'hex'),
+                patched:  Buffer.from('4881fe40420f00bf40420f004 80f4ffe'.replace(/ /g, ''), 'hex'),
+                halfPatches: [
+                    Buffer.from('4881fe40420f00bf409c00004 80f4ffe'.replace(/ /g, ''), 'hex'),
+                    Buffer.from('4881fe409c0000bf40420f004 80f4ffe'.replace(/ /g, ''), 'hex')
                 ]
             }
         ]
@@ -108,6 +129,21 @@ const PATCH_SITES = [
                 name: 'all versions',
                 original: Buffer.from('c7400850c30000c7400c9a99193e', 'hex'),
                 patched:  Buffer.from('c7400840420f00c7400c9a99193e', 'hex'),
+                halfPatches: []
+            }
+        ]
+    },
+    {
+        id: 'site3',
+        name: 'Subtraction branch threshold (40k -> 1M, 2.23.0+)',
+        // Optional site: physically absent in 2.14.0-2.22.0 binaries.
+        // Patched when present for consistency; NOT_FOUND is not an error.
+        required: false,
+        variants: [
+            {
+                name: 'cmovg sub-branch (2.23.0+)',
+                original: Buffer.from('4881fa409c00007f0531d290eb074881c2c063ffff', 'hex'),
+                patched:  Buffer.from('4881fa40420f00 7f0531d290eb07 4881c2c063ffff'.replace(/ /g, ''), 'hex'),
                 halfPatches: []
             }
         ]
@@ -215,17 +251,57 @@ function resolveLanguageServerPath(customTarget = null) {
     return null;
 }
 
+/**
+ * Profile detection by site0 variant form.
+ * Profiles (newest first):
+ *  - 'v226'  : cmovg rsi/edi 40k form  (Antigravity 2.26.0+)
+ *  - 'v223'  : cmovg ebx/esi 40k forms (Antigravity 2.23.0-2.25.0)
+ *  - 'modern': cmovb edi 50k form      (Antigravity 2.18.1-2.22.0)
+ *  - 'legacy': cmovb esi 50k form      (Antigravity 2.14.0-2.17.x)
+ *  - null    : unknown / incompatible binary
+ */
+const PROFILE_SITE0_MARKERS = [
+    { profile: 'v226', name: 'cmovg rsi/edi (2.26.0+)' },
+    { profile: 'v223', name: 'cmovg ebx (2.23.0-2.25.0)' },
+    { profile: 'v223', name: 'cmovg esi (2.23.0-2.25.0)' },
+    { profile: 'modern', name: 'edi (2.18.1+)' },
+    { profile: 'legacy', name: 'esi (2.14.0-2.17.x)' }
+];
+
 function detectBinaryProfile(buffer) {
     const site0 = PATCH_SITES[0];
-    const ediVariant = site0.variants.find((v) => v.name.includes('edi'));
-    if (ediVariant && (buffer.indexOf(ediVariant.original) !== -1 || buffer.indexOf(ediVariant.patched) !== -1)) {
-        return 'modern';
-    }
-    const esiVariant = site0.variants.find((v) => v.name.includes('esi'));
-    if (esiVariant && (buffer.indexOf(esiVariant.original) !== -1 || buffer.indexOf(esiVariant.patched) !== -1)) {
-        return 'legacy';
+    for (const marker of PROFILE_SITE0_MARKERS) {
+        const variant = site0.variants.find((v) => v.name === marker.name);
+        if (variant && (buffer.indexOf(variant.original) !== -1 || buffer.indexOf(variant.patched) !== -1)) {
+            return marker.profile;
+        }
     }
     return null;
+}
+
+/**
+ * Sites that physically exist per profile. Sites 1/2a/2b were rebuilt away by
+ * the Go compiler in 2.23.0 (cmovg era): only site0 and site3 remain.
+ * Site3 is optional in every profile.
+ */
+const PROFILE_REQUIRED_SITES = {
+    v226: ['site0', 'site3'],
+    v223: ['site0', 'site3'],
+    modern: ['site0', 'site1', 'site2a', 'site2b'],
+    legacy: ['site0', 'site1', 'site2a', 'site2b']
+};
+
+/**
+ * Whether the site is required in the given profile. A required site that is
+ * NOT_FOUND makes the binary incompatible; an optional site that is NOT_FOUND
+ * is simply skipped (e.g. site3 in 2.14-2.22, sites 1/2a/2b in 2.23+).
+ */
+function isSiteRequired(site, profile) {
+    if (site.required === false) return false;
+    if (profile && PROFILE_REQUIRED_SITES[profile]) {
+        return PROFILE_REQUIRED_SITES[profile].includes(site.id);
+    }
+    return true; // unknown profile: be strict about all sites except site3
 }
 
 function scanSite(buffer, site, profile = null) {
@@ -234,6 +310,14 @@ function scanSite(buffer, site, profile = null) {
         variants = [...site.variants].sort((a, b) => (b.name.includes('2.18.1+') ? 1 : 0) - (a.name.includes('2.18.1+') ? 1 : 0));
     } else if (profile === 'legacy') {
         variants = [...site.variants].sort((a, b) => (b.name.includes('2.14.0-2.17.x') ? 1 : 0) - (a.name.includes('2.14.0-2.17.x') ? 1 : 0));
+    } else if (profile === 'v226' || profile === 'v223') {
+        // 256k patched form is shared with 128k; prefer the 256k variant so that
+        // revert writes back the correct original (256k) bytes. cmovg variants
+        // (if present on the site) take priority for these profiles.
+        variants = [...site.variants].sort((a, b) => {
+            const score = (name) => (name.includes('2.26.0+') ? 3 : (name.includes('2.23.0-2.25.0') ? 2 : (name.includes('2.18.1+') ? 1 : 0)));
+            return score(b.name) - score(a.name);
+        });
     }
 
     for (const variant of variants) {
@@ -320,9 +404,9 @@ function patchLanguageServer(options = {}) {
     // 2. Handle Revert
     if (revert) {
         const anyPatched = siteResults.some((r) => r.status === 'PATCHED');
-        const allOriginal = siteResults.every((r) => r.status === 'ORIGINAL');
+        const allOriginal = siteResults.every((r) => r.status === 'ORIGINAL' || r.status === 'NOT_FOUND');
 
-        if (!anyPatched && allOriginal) {
+        if (!anyPatched && (allOriginal || siteResults.every((r) => r.status === 'NOT_FOUND'))) {
             return {
                 status: 'ALREADY_ORIGINAL',
                 message: 'Binary already has original caps across all sites.',
@@ -377,22 +461,25 @@ function patchLanguageServer(options = {}) {
     }
 
     // 3. Handle Patch
-    const allPatched = siteResults.every((r) => r.status === 'PATCHED');
+    // "Done" = every site that EXISTS in this profile is PATCHED.
+    // Optional sites (site3) and sites absent in the profile (1/2a/2b for v223/v226) are skipped.
+    const relevant = siteResults.filter((r) => r.status !== 'NOT_FOUND' || isSiteRequired(r.site, profile));
+    const allPatched = relevant.length > 0 && relevant.every((r) => r.status === 'PATCHED');
     if (allPatched) {
         return {
             status: 'ALREADY_PATCHED',
-            message: 'Binary is already patched with 1,000,000 caps across all 4 sites.',
+            message: `Binary is already patched with 1,000,000 caps across all ${relevant.length} site(s) for profile ${profile}.`,
             path: binPath
         };
     }
 
-    const unpatchedOrMissing = siteResults.filter((r) => r.status !== 'PATCHED');
+    const unpatchedOrMissing = relevant.filter((r) => r.status !== 'PATCHED');
     const missing = unpatchedOrMissing.filter((r) => r.status === 'NOT_FOUND');
     if (missing.length > 0) {
         const missingNames = missing.map((m) => m.site.name).join(', ');
         return {
             status: 'TARGET_NOT_FOUND',
-            message: `Signatures not found for: ${missingNames}. Binary version may be incompatible.`,
+            message: `Signatures not found for: ${missingNames} (profile ${profile}). Binary version may be incompatible.`,
             path: binPath
         };
     }
@@ -496,5 +583,9 @@ module.exports = {
     SIG_ORIGINAL,
     SIG_PATCHED,
     SIG_HALF_PATCH_1,
-    SIG_HALF_PATCH_2
+    SIG_HALF_PATCH_2,
+    detectBinaryProfile,
+    scanSite,
+    isSiteRequired,
+    PROFILE_REQUIRED_SITES
 };

@@ -22,8 +22,10 @@ const recipes = [
  * @param {string} targetDir Unpacked asar directory
  * @returns {boolean} true if all recipes applied or were already patched
  */
-function applyAll(targetDir) {
+function applyAll(targetDir, options = {}) {
     console.log('[Patcher] Target directory:', targetDir);
+    const { recordPatchTelemetry } = require('../utils/patch_telemetry');
+    const telemetryOn = options.telemetry !== false;
     const failures = [];
     for (const recipe of recipes) {
         let ok = true;
@@ -36,6 +38,14 @@ function applyAll(targetDir) {
         }
         if (!ok) {
             failures.push(recipe);
+        }
+        if (telemetryOn) {
+            recordPatchTelemetry({
+                kind: 'recipe_applied',
+                recipe: recipe.name,
+                result: ok ? 'ok' : 'fail',
+                detail: ok ? null : 'TARGET PATTERN NOT FOUND (version drift?)'
+            });
         }
     }
 

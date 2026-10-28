@@ -27,6 +27,8 @@ const {
     bucketResetTimeMs,
     isGroupQuotaExhausted
 } = require('./quota_utils');
+// Roadmap item 5: per-model monthly cost tracking (passive display only).
+const { ByokCostTracker, resolvePriceRow } = require('./byok_cost_tracker');
 
 class KeyRedactor {
     constructor(configRepo) {
@@ -71,6 +73,12 @@ class ByokManager {
         this._tieredWarned = false;
         this._nativeModelIds = new Set();
         this.nativeTieredModelIds = null;
+        // Roadmap item 5: cost tracking (graceful no-op when store is unavailable)
+        try {
+            this.costTracker = options.costTracker || new ByokCostTracker(options.costTrackerPath || undefined);
+        } catch (_) {
+            this.costTracker = null;
+        }
         this._rebuildSlotMap();
     }
 
@@ -949,6 +957,29 @@ class ByokManager {
     }
 
     /**
+     * Roadmap item 5: records a usage event into the cost tracker. Fire-and-
+     * forget with full fault isolation — cost display must never break the
+     * request stream. Aggregates only on stream end to avoid double counting
+     * intermediate usageMetadata frames.
+     */
+    _recordCost(modelConfig, usageMetadata, isStreamEnd) {
+        if (!this.costTracker || !isStreamEnd || !usageMetadata) return;
+        try {
+            // Aggregate under the stable slot id; resolve the price by the
+            // provider-facing modelName (catalog keys are model names).
+            this.costTracker.recordUsage(
+                (modelConfig && (modelConfig.id || modelConfig.modelName)) || 'byok-unknown',
+                {
+                    promptTokens: usageMetadata.promptTokenCount,
+                    cachedTokens: usageMetadata.cachedContentTokenCount,
+                    outputTokens: (usageMetadata.candidatesTokenCount || 0) + (usageMetadata.thoughtsTokenCount || 0)
+                },
+                resolvePriceRow(modelConfig && modelConfig.provider, modelConfig && modelConfig.modelName)
+            );
+        } catch (_) { /* cost tracking must never break translation */ }
+    }
+
+    /**
      * Fire-and-forget delegation to the provider translator. The manager
      * never performs HTTP itself — the translator owns the request/stream.
      * Single implementation for both the tier-routed and normal BYOK paths
@@ -963,6 +994,7 @@ class ByokManager {
             tunnelAgent: modelConfig.routeViaProxy === false ? null : tunnelAgent,
             redactor: this.redactor,
             onUsage: (usageMetadata, model, isStreamEnd) => {
+                this._recordCost(modelConfig, usageMetadata, isStreamEnd);
                 if (onUsage) onUsage(usageMetadata, reportModelName || model, isStreamEnd);
             }
         };
@@ -992,6 +1024,7 @@ class ByokManager {
             tunnelAgent: modelConfig.routeViaProxy === false ? null : tunnelAgent,
             redactor: this.redactor,
             onUsage: (usageMetadata, model, isStreamEnd) => {
+                this._recordCost(modelConfig, usageMetadata, isStreamEnd);
                 if (onUsage) onUsage(usageMetadata, reportModelName || model, isStreamEnd);
             }
         };

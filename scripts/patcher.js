@@ -5,7 +5,7 @@ const { applyAll } = require('./patcher/recipe_registry');
  * @param {string} targetDir Unpacked asar directory
  */
 function patchDirectory(targetDir) {
-    applyAll(targetDir);
+    return applyAll(targetDir);
 }
 
 module.exports = { patchDirectory };

@@ -149,6 +149,7 @@ class ByokController {
         this.editingModel = null;
         this.chatModelVariants = [];
         this.testResults = new Map();
+        this.costStats = { models: {}, total: null, month: null }; // Roadmap item 5 (passive display)
         this.isTesting = false;
         this.onStateChange = null;
     }
@@ -163,6 +164,17 @@ class ByokController {
                     if (res.presets && Object.keys(res.presets).length > 0) {
                         this.presets = { ...this.presets, ...res.presets };
                     }
+                }
+            }
+            // Roadmap item 5: passive monthly cost stats (best-effort, no UI blocking)
+            if (typeof window !== 'undefined' && window.agyBridge?.getByokCostStats) {
+                try {
+                    const costRes = await window.agyBridge.getByokCostStats();
+                    if (costRes && costRes.success && costRes.stats) {
+                        this.costStats = costRes.stats;
+                    }
+                } catch (costErr) {
+                    console.warn('[ByokController] Cost stats unavailable:', costErr);
                 }
             }
         } catch (e) {

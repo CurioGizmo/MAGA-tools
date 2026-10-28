@@ -22,7 +22,9 @@ const assert = require('assert');
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-prelogin-test-'));
 const testProfilesDir = path.join(tmpDir, 'profiles');
 const testTokenPath = path.join(tmpDir, 'jetski-standalone-oauth-token');
+const testStoragePath = path.join(tmpDir, 'app_storage.json');
 fs.mkdirSync(testProfilesDir, { recursive: true, mode: 0o700 });
+fs.writeFileSync(testStoragePath, JSON.stringify({ 'jetski.onboarding.lastLoginUsername': 'initial@gmail.com' }, null, 2), 'utf8');
 
 // Mock electron before requiring prelogin_selector
 const Module = require('module');
@@ -53,6 +55,8 @@ Module.prototype.require = function(id) {
 };
 
 const prelogin = require('../patches/prelogin/selector');
+prelogin._setAppStoragePathsForTesting([testStoragePath]);
+prelogin._setProfilesDirForTesting(testProfilesDir);
 
 // Helpers for test profiles
 function createTestProfile(email, name, credData, metaData = {}) {
@@ -218,11 +222,78 @@ async function runTests() {
     console.log('  [✓] Escape / window close / timeout cannot wipe the active token');
     console.log('  [✓] Destructive logout (-1) is reachable only from the explicit #sb button');
 
+    // -------------------------------------------------------------
+    // Test 7: OS Credential Store abstraction & lifecycle
+    // -------------------------------------------------------------
+    console.log('\n7. Testing OS Credential Store abstraction & lifecycle...');
+    let mockStoreData = null;
+    let mockStoreDeleteCalled = false;
+    const mockStore = {
+        read: () => mockStoreData,
+        write: (secret) => { mockStoreData = secret; return true; },
+        delete: () => { mockStoreData = null; mockStoreDeleteCalled = true; return true; }
+    };
+    prelogin._setCredStoreForTesting(mockStore);
+
+    const testCredPayload = JSON.stringify({
+        token: { access_token: 'mock_at_123', refresh_token: 'mock_rt_456' },
+        email: 'mock_os_user@gmail.com'
+    });
+
+    prelogin.setActiveCredentialRaw(testCredPayload);
+    assert.strictEqual(mockStoreData, testCredPayload, 'Mock store must receive credential payload');
+    assert.strictEqual(prelogin.getActiveCredentialRaw(), testCredPayload, 'getActiveCredentialRaw must return store content');
+    assert.strictEqual(prelogin.getActiveEmail(), 'mock_os_user@gmail.com', 'getActiveEmail must parse email from store payload');
+
+    prelogin.clearActiveCredential();
+    assert.strictEqual(mockStoreData, null, 'clearActiveCredential must clear store content');
+    assert.strictEqual(mockStoreDeleteCalled, true, 'clearActiveCredential must call store.delete()');
+    console.log('  [✓] OS Credential Store lifecycle (read, write, delete) functions correctly');
+
+    // -------------------------------------------------------------
+    // Test 8: switchToProfile with OS Credential Store
+    // -------------------------------------------------------------
+    console.log('\n8. Testing switchToProfile with OS Credential Store...');
+    const profA = createTestProfile('switch_user_a@gmail.com', 'User A', {
+        token: { access_token: 'at_a', refresh_token: 'rt_a' },
+        email: 'switch_user_a@gmail.com'
+    });
+    const profB = createTestProfile('switch_user_b@gmail.com', 'User B', {
+        token: { access_token: 'at_b', refresh_token: 'rt_b' },
+        email: 'switch_user_b@gmail.com'
+    });
+
+    // Start with User A in OS store
+    const credA = fs.readFileSync(path.join(profA, 'credentials.json'), 'utf8');
+    mockStore.write(credA);
+    assert.strictEqual(prelogin.getActiveEmail(), 'switch_user_a@gmail.com');
+
+    // Switch to User B
+    const chosenB = {
+        email: 'switch_user_b@gmail.com',
+        credPath: path.join(profB, 'credentials.json'),
+        profileDir: profB
+    };
+    prelogin.switchToProfile(chosenB);
+
+    assert.strictEqual(prelogin.getActiveEmail(), 'switch_user_b@gmail.com', 'Active email must be updated to User B');
+    const storeParsed = JSON.parse(mockStore.read());
+    assert.strictEqual(storeParsed.email, 'switch_user_b@gmail.com', 'OS Store must now contain User B creds');
+    const storageData = JSON.parse(fs.readFileSync(testStoragePath, 'utf8'));
+    assert.strictEqual(storageData['jetski.onboarding.lastLoginUsername'], 'switch_user_b@gmail.com', 'app_storage must be updated to User B');
+
+    // Clean up mock store and app storage paths
+    prelogin._setCredStoreForTesting(null);
+    prelogin._setAppStoragePathsForTesting(null);
+    prelogin._setProfilesDirForTesting(null);
+    console.log('  [✓] switchToProfile successfully writes new credentials to OS store and app_storage');
+
     // Cleanup hermetic temp directory
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
 
     console.log('\n=== ALL PRE-LOGIN SELECTOR TESTS PASSED! ✓ ===');
 }
+
 
 runTests().catch(err => {
     console.error('Test failed:', err);
