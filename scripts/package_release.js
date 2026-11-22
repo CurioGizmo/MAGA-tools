@@ -65,12 +65,36 @@ function packageRelease() {
     // Если есть готовый node_modules с @electron/asar, включаем его для нулевых зависимостей у пользователя
     const asarModulePath = path.join(ROOT_DIR, 'node_modules', '@electron', 'asar');
     if (fs.existsSync(asarModulePath)) {
-        console.log('[3/4] Включение встроенных runtime-модулей (@electron/asar)...');
-        fs.mkdirSync(path.join(stageDir, 'node_modules', '@electron'), { recursive: true });
-        execSync(`cp -r "${path.join(ROOT_DIR, 'node_modules', '@electron', 'asar')}" "${path.join(stageDir, 'node_modules', '@electron')}/"`);
-        const pickleSrc = path.join(ROOT_DIR, 'node_modules', 'chromium-pickle-js');
-        if (fs.existsSync(pickleSrc)) {
-            execSync(`cp -r "${pickleSrc}" "${path.join(stageDir, 'node_modules')}/"`);
+        console.log('[3/4] Включение встроенных runtime-модулей (@electron/asar и зависимости)...');
+        const stageModules = path.join(stageDir, 'node_modules');
+        fs.mkdirSync(stageModules, { recursive: true });
+
+        // Копируем все production зависимости для автономной работы @electron/asar
+        const prodDeps = [
+            '@electron',
+            'commander',
+            'glob',
+            'minimatch',
+            'brace-expansion',
+            'balanced-match',
+            'concat-map',
+            'fs.realpath',
+            'inflight',
+            'inherits',
+            'once',
+            'path-is-absolute',
+            'wrappy',
+            'chromium-pickle-js'
+        ];
+        for (const dep of prodDeps) {
+            const src = path.join(ROOT_DIR, 'node_modules', dep);
+            if (fs.existsSync(src)) {
+                execSync(`cp -r "${src}" "${stageModules}/"`);
+            }
+        }
+        const binAsar = path.join(ROOT_DIR, 'node_modules', '.bin');
+        if (fs.existsSync(binAsar)) {
+            execSync(`cp -r "${binAsar}" "${stageModules}/"`);
         }
     }
 

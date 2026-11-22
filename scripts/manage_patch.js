@@ -74,8 +74,8 @@ async function main() {
             process.exit(1);
         }
         if (cli.isRollback) {
-            await performRollback(status);
-        } else if (await performPatch(status, false)) {
+            await performRollback(status, cli.isNoKill);
+        } else if (await performPatch(status, cli.isNoKill)) {
             savePreloginLangConfig(lang);
         }
         if (cli.isStart) {

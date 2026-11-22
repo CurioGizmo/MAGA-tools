@@ -15,6 +15,9 @@ function sleep(ms) {
  * @returns {boolean}
  */
 function isAntigravityRunning() {
+    if (process.env.MAGA_TEST_SKIP_PROCESS_CHECK === '1') {
+        return false;
+    }
     try {
         if (process.platform === 'win32') {
             const out = execSync('tasklist /FI "IMAGENAME eq Antigravity.exe" /NH', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });

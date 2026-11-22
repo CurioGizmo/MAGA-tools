@@ -18,6 +18,36 @@ $Host.UI.RawUI.WindowTitle = "Antigravity 2: Patch & Rollback Manager"
 $BACKUP_FILENAME = "app.asar.agy_clean_orig.bak"
 $LEGACY_BACKUP_FILENAME = "app.asar.orig.bak"
 
+# Robust resolution of scripts directory and project root (supports -File, in-memory ScriptBlock, and direct call)
+$discoveredScriptsDir = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $PSScriptRoot
+} elseif (-not [string]::IsNullOrWhiteSpace($global:PSScriptRoot)) {
+    $global:PSScriptRoot
+} elseif (-not [string]::IsNullOrWhiteSpace($env:MAGA_SCRIPTS_DIR)) {
+    $env:MAGA_SCRIPTS_DIR
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} elseif (Test-Path ".\scripts\apply_patch.ps1") {
+    (Resolve-Path ".\scripts").Path
+} elseif (Test-Path ".\apply_patch.ps1") {
+    (Get-Location).Path
+} else {
+    (Get-Location).Path
+}
+
+$discoveredRootDir = if (Test-Path (Join-Path $discoveredScriptsDir "..\package.json")) {
+    (Resolve-Path (Join-Path $discoveredScriptsDir "..")).Path
+} elseif (Test-Path (Join-Path $discoveredScriptsDir "package.json")) {
+    $discoveredScriptsDir
+} else {
+    Split-Path -Parent $discoveredScriptsDir
+}
+
+$Script:ScriptsDir = $discoveredScriptsDir
+$Script:RootDir = $discoveredRootDir
+$Script:NativePatcher = Join-Path $Script:ScriptsDir "installer\native_patcher.ps1"
+$Script:DefaultPatched = Join-Path $Script:RootDir "app.asar.patched"
+
 function Show-Help {
     Write-Host "Использование: powershell -File scripts\apply_patch.ps1 [ОПЦИИ]" -ForegroundColor Cyan
     Write-Host ""
@@ -37,13 +67,14 @@ if ($Help) {
 }
 
 function Test-AntigravityRunning {
+    if ($NoKill -or $env:MAGA_TEST_SKIP_PROCESS_CHECK -eq "1") { return $false }
     $running = Get-Process -Name "Antigravity" -ErrorAction SilentlyContinue
     return [bool]$running
 }
 
-function Wait-AntigravityClosed {
+function Wait-AntigravityClosed([switch]$NoWait) {
     if (-not (Test-AntigravityRunning)) {
-        return $true
+        return
     }
     if ($NoWait) {
         Write-Host "[-] Ошибка: Antigravity запущен. Завершите работу приложения или запустите без -NoWait." -ForegroundColor Red
@@ -59,7 +90,7 @@ function Wait-AntigravityClosed {
     }
     Write-Host "    [+] Приложение Antigravity закрыто. Продолжаем установку..." -ForegroundColor Green
     Write-Host ""
-    return $true
+    return
 }
 
 function Stop-AntigravityProcesses {
@@ -123,7 +154,13 @@ function Normalize-ResourcesDir([string]$inputPath) {
     return $clean
 }
 
-function Get-InstallationStatus([string]$resDir) {
+function Get-InstallationStatus {
+    param(
+        [Parameter(Position=0, Mandatory=$true)]
+        [Alias("Path", "ResourcesDir")]
+        [string]$resDir
+    )
+    if ([string]::IsNullOrWhiteSpace($resDir)) { return $null }
     $asarPath = Join-Path $resDir "app.asar"
     $cleanBak = Join-Path $resDir $BACKUP_FILENAME
     $legacyBak = Join-Path $resDir $LEGACY_BACKUP_FILENAME
@@ -157,37 +194,110 @@ function Get-InstallationStatus([string]$resDir) {
     }
 }
 
+function Test-IsPatchedAsarStale([string]$PatchedPath) {
+    if (-not (Test-Path $PatchedPath)) { return $true }
+    $item = Get-Item $PatchedPath
+    if ($item.Length -lt 1048576) { return $true }
+    $mtime = $item.LastWriteTimeUtc
+    $rootDir = $Script:RootDir
+    $scriptsDir = $Script:ScriptsDir
+
+    $manifest = Join-Path $rootDir "patch_manifest.json"
+    if (Test-Path $manifest) {
+        if ((Get-Item $manifest).LastWriteTimeUtc -gt $mtime) { return $true }
+    }
+
+    $files = Get-ChildItem -LiteralPath $scriptsDir -Recurse -File -Include *.js, *.css, *.json, *.ps1 |
+        Where-Object { $_.FullName -notmatch "node_modules|\.git|research|tests" }
+    foreach ($f in $files) {
+        if ($f.LastWriteTimeUtc -gt $mtime) { return $true }
+    }
+    return $false
+}
+
 function Find-PatchedAsar {
-    $rootDir = Join-Path $PSScriptRoot ".."
-    $candidates = @(
-        (Join-Path $rootDir "app.asar.patched"),
-        (Join-Path $PSScriptRoot "app.asar.patched")
+    param(
+        [Parameter(Position=0)]
+        [Alias("Path", "resDir")]
+        [string]$ResourcesDir,
+        [switch]$ForceRebuild
     )
-    foreach ($dir in (Get-StandardCandidateDirs)) {
-        $candidates += (Join-Path $dir "app.asar.patched")
+    $rootDir = $Script:RootDir
+    $defaultPatched = $Script:DefaultPatched
+
+    if (-not $ForceRebuild -and (Test-Path $defaultPatched) -and (-not (Test-IsPatchedAsarStale $defaultPatched))) {
+        return $defaultPatched
     }
 
-    foreach ($p in $candidates) {
-        if (Test-Path $p) { return $p }
+    # Find clean base asar to build from
+    $baseAsar = $null
+    if ($ResourcesDir) {
+        $cleanBak = Join-Path $ResourcesDir $BACKUP_FILENAME
+        $legacyBak = Join-Path $ResourcesDir $LEGACY_BACKUP_FILENAME
+        $origAsar = Join-Path $ResourcesDir "app.asar"
+        if (Test-Path $cleanBak) { $baseAsar = $cleanBak }
+        elseif (Test-Path $legacyBak) { $baseAsar = $legacyBak }
+        elseif (Test-Path $origAsar) { $baseAsar = $origAsar }
+    }
+    if (-not $baseAsar) {
+        foreach ($dir in (Get-StandardCandidateDirs)) {
+            $cleanBak = Join-Path $dir $BACKUP_FILENAME
+            $legacyBak = Join-Path $dir $LEGACY_BACKUP_FILENAME
+            $origAsar = Join-Path $dir "app.asar"
+            if (Test-Path $cleanBak) { $baseAsar = $cleanBak; break }
+            elseif (Test-Path $legacyBak) { $baseAsar = $legacyBak; break }
+            elseif (Test-Path $origAsar) { $baseAsar = $origAsar; break }
+        }
     }
 
-    # Try building on the fly if node is present
-    $builder = Join-Path $PSScriptRoot "build_patched_asar.js"
-    if (Test-Path $builder) {
-        $nodeCmd = Get-Command "node" -ErrorAction SilentlyContinue
-        if ($nodeCmd) {
-            Write-Host "[*] app.asar.patched не найден, запуск автоматической сборки..." -ForegroundColor Yellow
-            & node $builder
-            foreach ($p in $candidates) {
-                if (Test-Path $p) { return $p }
+    # 1. Native PowerShell build (Zero-Node offline)
+    if ($baseAsar -and (Test-Path $baseAsar)) {
+        $nativePatcher = $Script:NativePatcher
+        if (Test-Path $nativePatcher) {
+            Write-Host "[*] Сборка app.asar.patched через встроенный PowerShell (Zero-Node)..." -ForegroundColor Yellow
+            . $nativePatcher
+            Build-PatchedAsarNative -BaseAsarPath $baseAsar -OutputAsarPath $defaultPatched -ProjectRoot $rootDir
+            if (Test-Path $defaultPatched) {
+                return $defaultPatched
             }
         }
     }
 
+    # 2. Fallback to Node.js builder if available
+    $builder = Join-Path $Script:ScriptsDir "build_patched_asar.js"
+    if (Test-Path $builder) {
+        $nodeCmd = Get-Command "node" -ErrorAction SilentlyContinue
+        if ($nodeCmd) {
+            Write-Host "[*] Попытка сборки через Node.js..." -ForegroundColor Yellow
+            & node $builder
+            if (Test-Path $defaultPatched) { return $defaultPatched }
+        }
+    }
+
+    # 3. Existing candidate files
+    $candidates = @(
+        $defaultPatched,
+        (Join-Path $Script:ScriptsDir "app.asar.patched")
+    )
+    foreach ($dir in (Get-StandardCandidateDirs)) {
+        $candidates += (Join-Path $dir "app.asar.patched")
+    }
+    foreach ($p in $candidates) {
+        if (Test-Path $p) { return $p }
+    }
     return $null
 }
 
-function Start-AntigravityApp {
+function Start-AntigravityApp([string]$ResourcesDir = "") {
+    if ($ResourcesDir) {
+        $parent = Split-Path $ResourcesDir -Parent
+        $candidateExe = Join-Path $parent "Antigravity.exe"
+        if (Test-Path $candidateExe) {
+            Start-Process $candidateExe
+            Write-Host "      [+] Запущен: $candidateExe" -ForegroundColor Green
+            return
+        }
+    }
     $systemDrive = if ($env:SystemDrive) { $env:SystemDrive } else { "C:" }
     $usersRoot = Join-Path $systemDrive "Users"
     $userExes = if (Test-Path $usersRoot) {
@@ -208,10 +318,10 @@ function Start-AntigravityApp {
     }
 }
 
-function Invoke-PatchAction($status) {
+function Invoke-PatchAction($status, [switch]$Rebuild) {
     Write-Host ""
     Write-Host "=== Применение патча к: $($status.ResourcesDir) ===" -ForegroundColor Cyan
-    Wait-AntigravityClosed
+    $null = Wait-AntigravityClosed
 
     $cleanBak = Join-Path $status.ResourcesDir $BACKUP_FILENAME
     $legacyBak = Join-Path $status.ResourcesDir $LEGACY_BACKUP_FILENAME
@@ -228,14 +338,21 @@ function Invoke-PatchAction($status) {
         Write-Host "    [-] Эталонный бэкап уже существует: $cleanBak" -ForegroundColor DarkGray
     }
 
-    $sourcePatched = Find-PatchedAsar
+    $sourcePatched = Find-PatchedAsar -ResourcesDir $status.ResourcesDir -ForceRebuild:$Rebuild
     if (-not $sourcePatched) {
-        Write-Host "[-] ОШИБКА: app.asar.patched не найден! Запустите 'npm run build' для сборки." -ForegroundColor Red
+        Write-Host "[-] ОШИБКА: Не удалось получить или собрать app.asar.patched!" -ForegroundColor Red
         return
     }
 
     Write-Host "    [+] Установка пропатченного asar из: $sourcePatched" -ForegroundColor Green
     Copy-Item $sourcePatched $status.AsarPath -Force
+
+    # Apply 1M compaction cap patch to language_server.exe
+    $nativePatcher = $Script:NativePatcher
+    if (Test-Path $nativePatcher) {
+        . $nativePatcher
+        Invoke-NativeLanguageServerCapPatch -ResourcesDir $status.ResourcesDir
+    }
 
     Write-Host ""
     Write-Host "[SUCCESS] Патч успешно применен!" -ForegroundColor Green
@@ -243,12 +360,11 @@ function Invoke-PatchAction($status) {
     Write-Host "    Бэкап:   $cleanBak" -ForegroundColor Gray
     Write-Host ""
 
-    $ans = "Y"
-    if (-not $Patch) {
+    if (-not $Patch -and -not $Path) {
         $ans = Read-Host "Запустить Antigravity сейчас? (Y/n)"
-    }
-    if ($ans -eq "" -or $ans -match "^[YyДд]") {
-        Start-AntigravityApp
+        if ($ans -eq "" -or $ans -match "^[Yy\u0414\u0434]") {
+            Start-AntigravityApp $status.ResourcesDir
+        }
     }
 }
 
@@ -407,14 +523,14 @@ while ($null -eq $selectedStatus) {
         exit 0
     }
 
-    if ($choice -match "^[AaАа]$") {
+    if ($choice -match "^[Aa\u0410\u0430]$") {
         foreach ($inst in $found) {
-            Invoke-PatchAction $inst
+            Invoke-PatchAction $inst -Rebuild:$inst.IsPatched
         }
         exit 0
     }
 
-    if ($choice -match "^[CcСс]$") {
+    if ($choice -match "^[Cc\u0421\u0441]$") {
         $customInput = Read-Host "Введите путь к папке установки (resources или корень Antigravity)"
         $norm = Normalize-ResourcesDir $customInput
         $status = Get-InstallationStatus $norm
@@ -465,7 +581,7 @@ $actionChoice = Read-Host "`nВыберите действие"
 $actionChoice = $actionChoice.Trim()
 
 if ($actionChoice -eq "1") {
-    Invoke-PatchAction $selectedStatus
+    Invoke-PatchAction $selectedStatus -Rebuild:$selectedStatus.IsPatched
 } elseif ($actionChoice -eq "2" -and $selectedStatus.IsPatched) {
     Invoke-RollbackAction $selectedStatus
 } else {

@@ -139,7 +139,7 @@ class MockElement {
         if (selector.startsWith('.')) return this.querySelectorByCls(selector.slice(1).split('.')[0]);
         if (selector === 'button') return this.querySelectorByTag('button');
         if (selector.startsWith('#')) return this.querySelectorById(selector.slice(1));
-        if (selector.includes('container-type')) return global._split;
+        if (selector.includes('container-type')) return (global._split && global._split.style && global._split.style['container-type']) ? global._split : null;
         return null;
     }
 
@@ -290,15 +290,42 @@ function buildSidebar219() {
     return sidebar;
 }
 
-function mountModal(sidebar) {
+function buildSidebar234() {
+    // 2.34+: no container-type on splitContainer, buttons wrapped in relative group/nav-item divs,
+    // Browser exists, account section with border-t at sidebar bottom
+    const sidebar = new MockElement('div');
+    sidebar.className = 'h-full w-full flex flex-col bg-sidebar';
+    const tabs = new MockElement('div');
+    tabs.className = 'flex-1 flex flex-col gap-1 py-3 overflow-y-auto';
+    ['General', 'Application', 'Appearance', 'Shortcuts', 'Models', 'Browser'].forEach(t => {
+        const wrap = new MockElement('div');
+        wrap.className = 'relative group/nav-item mx-2';
+        wrap.appendChild(mkBtn(t));
+        tabs.appendChild(wrap);
+    });
+    const account = new MockElement('div');
+    account.className = 'flex flex-col border-t border-solid border-sidebar-border py-2';
+    account.appendChild(mkBtn('user@gmail.com'));
+    sidebar.appendChild(tabs);
+    sidebar.appendChild(account);
+    return sidebar;
+}
+
+function mountModal(sidebar, options = {}) {
     for (const k of Object.keys(mockElements)) delete mockElements[k];
     const modal = new MockElement('div');
     modal.className = 'settings-modal-container';
     global._modal = modal;
     const split = new MockElement('div');
-    split.style['container-type'] = 'size';
+    if (!options.noContainerType) {
+        split.style['container-type'] = 'size';
+    } else {
+        split.className = 'relative flex w-full h-full outline-none';
+    }
     global._split = split;
+    modal.appendChild(split);
     const leftCol = new MockElement('div');
+    leftCol.className = 'flex';
     const rightCol = new MockElement('div');
     split.appendChild(leftCol);
     split.appendChild(rightCol);
@@ -312,10 +339,10 @@ function mountModal(sidebar) {
     return { tab, sidebar, rightPanel };
 }
 
-function runVersion(name, builder) {
+function runVersion(name, builder, options = {}) {
     console.log(`[${name}]`);
     const sidebar = builder();
-    const { tab } = mountModal(sidebar);
+    const { tab } = mountModal(sidebar, options);
     const btn = mockElements['agy-test-tab-btn'] || sidebar.querySelectorById('agy-test-tab-btn');
     assert.ok(btn, 'tab button must be created');
     const holder = btn.parentElement;
@@ -401,5 +428,6 @@ function runVersion(name, builder) {
 runVersion('2.13 layout (Browser anchor)', buildSidebar213);
 runVersion('2.14 layout (scroll list + account)', buildSidebar214);
 runVersion('2.15-2.19 layout (renamed classes, account first)', buildSidebar219);
+runVersion('2.34+ layout (no container-type, wrapped nav-items)', buildSidebar234, { noContainerType: true });
 
 console.log('\n=== ALL MULTIVERSION SETTINGS TABS TESTS PASSED! ===');

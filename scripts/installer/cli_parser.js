@@ -7,16 +7,19 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     let targetPath = null;
     let lang = null;
 
+    const hasFlag = (...flags) => argv.some(a => flags.includes(a.toLowerCase()));
+
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
-        if (arg.startsWith('--path=')) {
-            targetPath = arg.slice('--path='.length);
-        } else if (arg === '--path' && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+        const lower = arg.toLowerCase();
+        if (lower.startsWith('--path=') || lower.startsWith('-path=')) {
+            targetPath = arg.slice(arg.indexOf('=') + 1);
+        } else if ((lower === '--path' || lower === '-path' || lower === '/path') && argv[i + 1] && !argv[i + 1].startsWith('-') && !argv[i + 1].startsWith('/')) {
             targetPath = argv[i + 1];
-        } else if (arg.startsWith('--lang=')) {
-            const v = arg.slice('--lang='.length).toLowerCase();
+        } else if (lower.startsWith('--lang=') || lower.startsWith('-lang=')) {
+            const v = arg.slice(arg.indexOf('=') + 1).toLowerCase();
             if (v === 'ru' || v === 'en') lang = v;
-        } else if (arg === '--lang' && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+        } else if ((lower === '--lang' || lower === '-lang') && argv[i + 1] && !argv[i + 1].startsWith('-')) {
             const v = String(argv[i + 1]).toLowerCase();
             if (v === 'ru' || v === 'en') lang = v;
         }
@@ -25,14 +28,14 @@ function parseCliArgs(argv = process.argv.slice(2)) {
     return {
         targetPath,
         lang,
-        isPatch: argv.includes('--patch'),
-        isRollback: argv.includes('--rollback'),
-        isAll: argv.includes('--all'),
-        isList: argv.includes('--list'),
-        isNoKill: argv.includes('--no-kill'),
-        isNoWait: argv.includes('--no-wait'),
-        isStart: argv.includes('--start'),
-        isHelp: argv.includes('--help') || argv.includes('-h')
+        isPatch: hasFlag('--patch', '-patch', '/patch'),
+        isRollback: hasFlag('--rollback', '-rollback', '/rollback'),
+        isAll: hasFlag('--all', '-all', '/all'),
+        isList: hasFlag('--list', '-list', '/list'),
+        isNoKill: hasFlag('--no-kill', '-no-kill', '--nokill', '-nokill', '/nokill'),
+        isNoWait: hasFlag('--no-wait', '-no-wait', '--nowait', '-nowait', '/nowait'),
+        isStart: hasFlag('--start', '-start', '/start'),
+        isHelp: hasFlag('--help', '-help', '-h', '/?', '/help')
     };
 }
 

@@ -39,7 +39,27 @@ class SettingsTabObserver {
         const modal = document.querySelector(".settings-modal-container") || document.querySelector("[role=\"dialog\"]");
         if (!modal) return null;
 
-        const splitContainer = modal.querySelector("div[style*=\"container-type: size\"]") || modal.querySelector("div[style*=\"container-type\"]");
+        let splitContainer = modal.querySelector("div[style*=\"container-type: size\"]") || modal.querySelector("div[style*=\"container-type\"]");
+        if (!splitContainer || splitContainer.children.length < 2) {
+            // Antigravity >= 2.34: inline container-type was removed.
+            // Walk up from .bg-sidebar / .bg-panel to find the two-column flex container.
+            const sidebarEl = modal.querySelector(".bg-sidebar, .bg-panel");
+            if (sidebarEl) {
+                let curr = sidebarEl;
+                while (curr && curr !== modal) {
+                    const parent = curr.parentElement;
+                    if (parent && parent.children.length >= 2) {
+                        const hasFlex = (parent.classList && (parent.classList.contains("flex") || parent.classList.contains("grid"))) ||
+                                        (parent.style && (parent.style.display === "flex" || parent.style.display === "grid"));
+                        if (hasFlex) {
+                            splitContainer = parent;
+                            break;
+                        }
+                    }
+                    curr = parent;
+                }
+            }
+        }
         if (!splitContainer || splitContainer.children.length < 2) return null;
 
         const leftCol = splitContainer.children[0];
@@ -260,16 +280,24 @@ class SettingsTabObserver {
                 anchor = buttons.find(b => (b.textContent || "").trim() === anchorId);
             }
             if (anchor) {
-                const parent = anchor.parentNode || container;
-                return { parent, beforeNode: anchor.nextSibling || null };
+                let targetNode = anchor;
+                while (targetNode && targetNode.parentElement && targetNode.parentElement !== container && targetNode.parentElement !== sidebar) {
+                    targetNode = targetNode.parentElement;
+                }
+                const parent = targetNode.parentElement || container;
+                return { parent, beforeNode: targetNode.nextSibling || null };
             }
         }
         // Fallback: keep custom tabs inside the native tabs list, right after
         // existing custom tabs or the last native button — never below the account section.
         const lastBtn = this.findLastCustomOrNativeButton(container);
         if (lastBtn) {
-            const parent = lastBtn.parentNode || container;
-            return { parent, beforeNode: lastBtn.nextSibling || null };
+            let targetNode = lastBtn;
+            while (targetNode && targetNode.parentElement && targetNode.parentElement !== container && targetNode.parentElement !== sidebar) {
+                targetNode = targetNode.parentElement;
+            }
+            const parent = targetNode.parentElement || container;
+            return { parent, beforeNode: targetNode.nextSibling || null };
         }
         return { parent: container, beforeNode: null };
     }

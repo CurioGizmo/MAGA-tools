@@ -1,6 +1,6 @@
 {
   "name": "maga-tools",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Antigravity 2 Upgrade & Customization Toolkit (Adaptive Retry, DevTools, Token & Quota HUD, BYOK, Proxy Manager)",
   "scripts": {
     "lint": "eslint .",

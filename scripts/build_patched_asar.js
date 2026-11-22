@@ -1,4 +1,7 @@
-const fs = require('fs');
+process.noAsar = true;
+const fs = (typeof process !== 'undefined' && process.versions && process.versions.electron)
+    ? require('original-fs')
+    : require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { patchDirectory } = require('./patcher.js');
@@ -13,9 +16,13 @@ const {
 
 function getAsarCmd() {
     const localAsar = path.join(__dirname, '..', 'node_modules', '.bin', 'asar');
+    const asarJs = path.join(__dirname, '..', 'node_modules', '@electron', 'asar', 'bin', 'asar.js');
     const asarMjs = path.join(__dirname, '..', 'node_modules', '@electron', 'asar', 'bin', 'asar.mjs');
     // Resolve the node binary: prefer the running process, then common NVM paths
     const nodeBin = process.execPath || 'node';
+    if (fs.existsSync(asarJs)) {
+        return `"${nodeBin}" "${asarJs}"`;
+    }
     if (fs.existsSync(asarMjs)) {
         return `"${nodeBin}" "${asarMjs}"`;
     }
@@ -23,6 +30,18 @@ function getAsarCmd() {
         return `"${nodeBin}" "${localAsar}"`;
     }
     return `"${nodeBin}" -e "require('@electron/asar')"`;
+}
+
+function hasAsarTool() {
+    try {
+        require('@electron/asar');
+        return true;
+    } catch (e) {
+        const localAsar = path.join(__dirname, '..', 'node_modules', '.bin', 'asar');
+        const asarJs = path.join(__dirname, '..', 'node_modules', '@electron', 'asar', 'bin', 'asar.js');
+        const asarMjs = path.join(__dirname, '..', 'node_modules', '@electron', 'asar', 'bin', 'asar.mjs');
+        return fs.existsSync(asarJs) || fs.existsSync(asarMjs) || fs.existsSync(localAsar);
+    }
 }
 
 async function main() {
@@ -127,6 +146,31 @@ async function main() {
     fs.mkdirSync(buildDir, { recursive: true });
 
     const tempPatched = path.join(__dirname, '..', 'app.asar.patched.tmp');
+
+    // If @electron/asar is not installed (e.g. user never ran npm install),
+    // delegate to native PowerShell patcher (Zero-Node) on Windows
+    if (!hasAsarTool() && process.platform === 'win32') {
+        console.log('[*] Module @electron/asar not installed. Delegating to native PowerShell patcher (Zero-Node)...');
+        const nativePatcher = path.join(__dirname, 'installer', 'native_patcher.ps1');
+        const rootDir = path.resolve(__dirname, '..');
+        const psScript = `& { . '${nativePatcher}'; Build-PatchedAsarNative -BaseAsarPath '${baseAsar}' -OutputAsarPath '${tempPatched}' -ProjectRoot '${rootDir}' }`;
+        execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${psScript}"`, { stdio: 'inherit' });
+        if (fs.existsSync(tempPatched)) {
+            const size = fs.statSync(tempPatched).size;
+            console.log(`[+] Patched archive size: ${size} bytes (~${(size / (1024 * 1024)).toFixed(2)} MB)`);
+            const rootPatched = path.join(__dirname, '..', 'app.asar.patched');
+            fs.copyFileSync(tempPatched, rootPatched);
+            console.log(`[+] Placed root app.asar.patched -> ${rootPatched}`);
+            for (const d of resDirs) {
+                const targetPatched = path.join(d, 'app.asar.patched');
+                console.log(`[+] Copying to target: ${targetPatched}`);
+                fs.copyFileSync(tempPatched, targetPatched);
+            }
+            fs.unlinkSync(tempPatched);
+            console.log('\n[SUCCESS] Build finished successfully via native PowerShell patcher! ✓');
+            return;
+        }
+    }
 
     try {
         // 3. Extract asar from clean base

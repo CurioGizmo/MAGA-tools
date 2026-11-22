@@ -120,13 +120,41 @@ find_patched_asar() {
         fi
     done
 
-    # 5. If Node.js is installed, try building on the fly
-    if command -v node >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/build_patched_asar.js" ]; then
-        echo -e "${YELLOW}[*] app.asar.patched не найден, запуск сборки через node...${NC}" >&2
+    # 5. If Node.js or Antigravity Electron is available, try building on the fly
+    local node_bin=""
+    if command -v node >/dev/null 2>&1; then
+        node_bin="node"
+    else
+        for c in \
+            "$HOME/antigravity2/antigravity" \
+            "$HOME/Antigravity2/antigravity" \
+            "$HOME/.local/bin/antigravity2" \
+            "$HOME/.local/bin/antigravity" \
+            "/opt/antigravity/antigravity" \
+            "/opt/Antigravity/antigravity" \
+            "/opt/antigravity2/antigravity" \
+            "/opt/Antigravity2/antigravity" \
+            "$HOME/.local/share/antigravity/antigravity" \
+            "$HOME/.local/share/Antigravity/antigravity" \
+            "$HOME/.local/share/antigravity2/antigravity" \
+            "$HOME/.local/share/Antigravity2/antigravity" \
+            "$HOME/antigravity/antigravity" \
+            "/usr/bin/antigravity2" \
+            "/usr/bin/antigravity"; do
+            if [ -x "$c" ]; then
+                node_bin="$c"
+                export ELECTRON_RUN_AS_NODE=1
+                break
+            fi
+        done
+    fi
+
+    if [ -n "$node_bin" ] && [ -f "$SCRIPT_DIR/build_patched_asar.js" ]; then
+        echo -e "${YELLOW}[*] app.asar.patched не найден, запуск автоматической сборки...${NC}" >&2
         if [ -n "$target_dir" ]; then
-            node "$SCRIPT_DIR/build_patched_asar.js" "$target_dir" >&2
+            "$node_bin" "$SCRIPT_DIR/build_patched_asar.js" "$target_dir" >&2
         else
-            node "$SCRIPT_DIR/build_patched_asar.js" >&2
+            "$node_bin" "$SCRIPT_DIR/build_patched_asar.js" >&2
         fi
         if [ -f "$ROOT_DIR/app.asar.patched" ]; then
             echo "$ROOT_DIR/app.asar.patched"
@@ -142,6 +170,38 @@ find_patched_asar() {
                 return 0
             fi
         done
+    fi
+
+    # 6. Fallback to native Python 3 patcher (Zero-Node offline)
+    if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/installer/native_patcher.py" ]; then
+        local base_asar=""
+        if [ -n "$target_dir" ]; then
+            if [ -f "$target_dir/$BACKUP_FILENAME" ]; then
+                base_asar="$target_dir/$BACKUP_FILENAME"
+            elif [ -f "$target_dir/app.asar" ]; then
+                base_asar="$target_dir/app.asar"
+            fi
+        fi
+        if [ -z "$base_asar" ]; then
+            for dir in "${STANDARD_CANDIDATES[@]}"; do
+                if [ -f "$dir/$BACKUP_FILENAME" ]; then
+                    base_asar="$dir/$BACKUP_FILENAME"
+                    break
+                elif [ -f "$dir/app.asar" ]; then
+                    base_asar="$dir/app.asar"
+                    break
+                fi
+            done
+        fi
+
+        if [ -n "$base_asar" ]; then
+            echo -e "${YELLOW}[*] Сборка app.asar.patched через встроенный Python 3 (Zero-Node)...${NC}" >&2
+            python3 "$SCRIPT_DIR/installer/native_patcher.py" --base "$base_asar" --out "$ROOT_DIR/app.asar.patched" --root "$ROOT_DIR" >&2
+            if [ -f "$ROOT_DIR/app.asar.patched" ]; then
+                echo "$ROOT_DIR/app.asar.patched"
+                return 0
+            fi
+        fi
     fi
 
     return 1
@@ -285,6 +345,11 @@ perform_patch() {
     echo -e "    ${GREEN}[+] Установка пропатченного asar из: $source_patched${NC}"
     cp -f "$source_patched" "$asar_path.tmp"
     mv -f "$asar_path.tmp" "$asar_path"
+
+    # Apply 1M compaction cap patch to language_server
+    if command -v python3 >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/installer/native_patcher.py" ]; then
+        python3 "$SCRIPT_DIR/installer/native_patcher.py" --patch-ls "$target_dir" >/dev/null 2>&1 || true
+    fi
 
     echo -e "\n${GREEN}[SUCCESS] Патч успешно применен!${NC}"
     echo -e "    Каталог: $target_dir"
