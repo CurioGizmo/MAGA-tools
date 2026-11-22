@@ -9,12 +9,12 @@
 **A comprehensive suite of tools and extensions for Google Antigravity 2.**  
 Real-time token & context monitoring, external models (BYOK), multi-account management with startup profile selector, subagent model pools & routing, quick-commands bar, and built-in proxy manager.
 
-[![Version](https://img.shields.io/badge/version-v1.0.1-3b82f6.svg?style=flat-square)](package.json)
-[![Antigravity](https://img.shields.io/badge/antigravity-v2.14%20--%20v2.27+-10b981.svg?style=flat-square)](patch_manifest.json)
+[![Version](https://img.shields.io/badge/version-v1.0.2-3b82f6.svg?style=flat-square)](package.json)
+[![Antigravity](https://img.shields.io/badge/antigravity-v2.14%20--%20v2.34+-10b981.svg?style=flat-square)](patch_manifest.json)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-8b5cf6.svg?style=flat-square)](#️-installation-patching--rollback)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Integration](https://img.shields.io/badge/integration-100%25%20Native-f97316.svg?style=flat-square)](#️-architecture-principles)
-[![Tests](https://img.shields.io/badge/tests-54%20passing-emerald.svg?style=flat-square)](AGENTS.md)
+[![Tests](https://img.shields.io/badge/tests-55%20passing-emerald.svg?style=flat-square)](AGENTS.md)
 
 🌐 **English** • [Русский](README.ru.md)
 

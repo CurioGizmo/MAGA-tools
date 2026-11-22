@@ -125,6 +125,7 @@ jobs:
               node scripts/tests/test_keyring_isolation.js &&
               node scripts/tests/test_settings_backup.js &&
               node scripts/tests/test_reinstall_v27_upgrade.js &&
+              node scripts/tests/test_reinstall_v34_upgrade.js &&
               node scripts/tests/test_doctor.js &&
               node scripts/tests/test_version_canary.js &&
               node scripts/tests/test_patch_telemetry.js

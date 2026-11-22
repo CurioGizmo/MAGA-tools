@@ -147,6 +147,21 @@ const PATCH_SITES = [
                 halfPatches: []
             }
         ]
+    },
+    {
+        id: 'site_free_tier',
+        name: 'Free-tier geo & subscription eligibility bypass (UNSUPPORTED_LOCATION unlock)',
+        // Optional site: present across 2.14.0-2.34.0+ binaries.
+        // Patched when present to bypass UNSUPPORTED_LOCATION redirect to /onboarding; NOT_FOUND is not an error.
+        required: false,
+        variants: [
+            {
+                name: 'universal (2.14.0-2.34.0+)',
+                original: Buffer.from('4885db754180780800743b', 'hex'),
+                patched:  Buffer.from('4885db7541c64008019090', 'hex'),
+                halfPatches: []
+            }
+        ]
     }
 ];
 

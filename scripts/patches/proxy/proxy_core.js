@@ -3,6 +3,7 @@
  * Embedded CloudCode & Gemini API HTTP/HTTPS reverse proxy.
  */
 
+const EventEmitter = require('events');
 const http = require('http');
 const https = require('https');
 const zlib = require('zlib');
@@ -35,8 +36,9 @@ const { ByokManager, getSharedByokManager } = (() => {
 
 const MAX_UNARY_BUFFER_SIZE = 5 * 1024 * 1024; // 5 MB
 
-class CloudCodeProxy {
+class CloudCodeProxy extends EventEmitter {
     constructor(options = {}) {
+        super();
         this.targetHost = options.targetHost || TARGET_HOST;
         this.port = options.port || 0;
         this.server = null;
@@ -226,18 +228,35 @@ class CloudCodeProxy {
                     hasData: true
                 };
                 const payload = Buffer.from(JSON.stringify(fallbackJson), 'utf8');
-                console.log(`[CloudCode Proxy] ${reason ? reason + ': ' : ''}Served cached models fallback (${Object.keys(fallbackJson.models).length} models)`);
+                const modelCount = Object.keys(fallbackJson.models).length;
+                console.log(`[CloudCode Proxy] ${reason ? reason + ': ' : ''}Served cached models fallback (${modelCount} models)`);
                 res.writeHead(200, {
                     'content-type': 'application/json; charset=utf-8',
                     'content-length': payload.length
                 });
                 res.end(payload);
+                this.emit('models-updated', { email: activeEmail, count: modelCount, timestamp: Date.now() });
                 return true;
             }
         } catch (e) {
             console.warn('[CloudCode Proxy] Error serving cached models fallback:', e.message);
         }
         return false;
+    }
+
+    getCachedModels(email = null) {
+        try {
+            const activeEmail = email || this._getActiveEmail();
+            const cached = this.modelsCacheRepo ? this.modelsCacheRepo.load(activeEmail) : null;
+            let result = cached ? JSON.parse(JSON.stringify(cached)) : { models: {} };
+            if (this.byokManager && typeof this.byokManager.injectAvailableModels === 'function') {
+                result = this.byokManager.injectAvailableModels(result);
+            }
+            return result;
+        } catch (err) {
+            console.warn('[CloudCode Proxy] getCachedModels error:', err.message);
+            return { models: {} };
+        }
     }
 
     _handleModelsResponse(buffer, isGzip) {
@@ -257,7 +276,9 @@ class CloudCodeProxy {
                     timestamp: Date.now(),
                     hasData: true
                 };
-                console.log(`[CloudCode Proxy] Intercepted fresh models & quotas from Google (${Object.keys(json.models).length} models)`);
+                const modelCount = Object.keys(json.models).length;
+                console.log(`[CloudCode Proxy] Intercepted fresh models & quotas from Google (${modelCount} models)`);
+                this.emit('models-updated', { email: this._getActiveEmail(), count: modelCount, timestamp: Date.now() });
             }
         } catch (e) {}
     }
@@ -854,7 +875,9 @@ class CloudCodeProxy {
                         timestamp: Date.now(),
                         hasData: true
                     };
-                    console.log(`[CloudCode Proxy] Intercepted fresh models & quotas from Google (${Object.keys(json.models).length} models)`);
+                    const modelCount = Object.keys(json.models).length;
+                    console.log(`[CloudCode Proxy] Intercepted fresh models & quotas from Google (${modelCount} models)`);
+                    this.emit('models-updated', { email: this._getActiveEmail(), count: modelCount, timestamp: Date.now() });
                 }
                 // If upstream returned error (e.g. 401/403) but BYOK models exist, convert to 200 OK
                 if (statusCode !== 200 && json.models && Object.keys(json.models).length > 0) {

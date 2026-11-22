@@ -137,7 +137,25 @@ function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, 
             lookupByokReasoningLevels: makeIpcInvoke('agy:byok:lookup-reasoning-levels', 'lookupByokReasoningLevels'),
             reloadByokConfig: makeIpcInvoke('agy:byok:reload', 'reloadByokConfig'),
             getByokCostStats: makeIpcInvoke('agy:byok:get-cost-stats', 'getByokCostStats'),
-            getSubagentAvailableModels: makeIpcInvoke('agy:subagents:get-available-models', 'getSubagentAvailableModels')
+            getSubagentAvailableModels: makeIpcInvoke('agy:subagents:get-available-models', 'getSubagentAvailableModels'),
+            getCachedModels: (email) => {
+                try {
+                    if (typeof electron_1 !== 'undefined' && electron_1.ipcRenderer) {
+                        return electron_1.ipcRenderer.sendSync('agy:proxy:get-cached-models-sync', email);
+                    }
+                } catch (e) { console.warn('[agyBridge] getCachedModels sync error:', e); }
+                return null;
+            },
+            getCachedModelsAsync: makeIpcInvoke('agy:proxy:get-cached-models', 'getCachedModelsAsync'),
+            onModelsUpdated: (cb) => {
+                try {
+                    if (typeof electron_1 !== 'undefined' && electron_1.ipcRenderer) {
+                        electron_1.ipcRenderer.on('agy:proxy:models-updated', (_event, data) => {
+                            try { cb(data); } catch (err) { console.warn('[agyBridge] onModelsUpdated error:', err); }
+                        });
+                    }
+                } catch (e) { console.warn('[agyBridge] onModelsUpdated setup error:', e); }
+            }
         };
         if (typeof electron_1 !== 'undefined' && electron_1.contextBridge) {
             electron_1.contextBridge.exposeInMainWorld('agyBridge', agyBridgeAPI);

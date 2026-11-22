@@ -45,6 +45,15 @@ function registerProxyIpc(ipcMain, options = {}) {
         } catch (e) {}
     });
 
+    const getCachedModelsFn = options.getCachedModels || ((email) => {
+        try {
+            const { getCachedModels } = require('../cloudcode_proxy');
+            return getCachedModels(email);
+        } catch (e) {
+            return { models: {} };
+        }
+    });
+
     const proxyRepo = new ProxyConfigRepository();
 
     // 1. Live Telemetry Handlers
@@ -140,6 +149,22 @@ function registerProxyIpc(ipcMain, options = {}) {
             return { success: true };
         } catch (e) {
             return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('agy:proxy:get-cached-models', (_event, email) => {
+        try {
+            return getCachedModelsFn(email);
+        } catch (e) {
+            return { models: {} };
+        }
+    });
+
+    ipcMain.on('agy:proxy:get-cached-models-sync', (event, email) => {
+        try {
+            event.returnValue = getCachedModelsFn(email);
+        } catch (e) {
+            event.returnValue = { models: {} };
         }
     });
 }

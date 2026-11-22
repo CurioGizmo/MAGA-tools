@@ -1,6 +1,6 @@
 {
     "name": "antigravity2_upgrade",
-    "lastVerified": "2026-10-27",
+    "lastVerified": "2026-11-22",
     "testedVersions": [
         "2.14.0",
         "2.15.0",
@@ -15,7 +15,8 @@
         "2.24.0",
         "2.25.0",
         "2.26.0",
-        "2.27.0"
+        "2.27.0",
+        "2.34.0"
     ],
     "binaryAuditVersions": [
         "2.23.0",
@@ -23,9 +24,10 @@
         "2.24.0",
         "2.25.0",
         "2.26.0",
-        "2.27.0"
+        "2.27.0",
+        "2.34.0"
     ],
-    "binaryAuditNote": "Версии 2.23.0+ прошли аудит бинарника: asar-рецепты и free-tier сигнатура совместимы. Compaction-cap пересобран Google: 2.23.0-2.25.0 = cmovg ebx/esi 40k формы, 2.26.0+ = новая rsi/edi форма (48 81 fe 40 9c 00 00 bf 40 9c 00 00 48 0f 4f fe). Патчер compaction_cap_patch.js поддерживает все профили (legacy/modern/v223/v226) с профильной логикой обязательных сайтов. Карточки: backend-antigravity-2-23-0 в knowledge base.",
+    "binaryAuditNote": "Версии 2.23.0+ прошли аудит бинарника: asar-рецепты и free-tier сигнатура совместимы. Compaction-cap пересобран Google: 2.23.0-2.25.0 = cmovg ebx/esi 40k формы, 2.26.0+ и 2.34.0 = новая rsi/edi форма (48 81 fe 40 9c 00 00 bf 40 9c 00 00 48 0f 4f fe). Патчер compaction_cap_patch.js поддерживает все профили (legacy/modern/v223/v226) с профильной логикой обязательных сайтов.",
     "minTestedVersion": "2.14.0",
     "warningMessage": "Версия Antigravity отличается от протестированной. Возможно изменение верстки интерфейса, селекторов или внутренней структуры asar Google."
 }

@@ -20,6 +20,23 @@ const { SessionUsageTracker } = (() => {
 let activeProxyInstance = null;
 const proxyConfigRepo = new ProxyConfigRepository();
 
+function broadcastModelsUpdated(data) {
+    try {
+        let electron;
+        try { electron = require('electron'); } catch (_) {}
+        if (electron && electron.BrowserWindow) {
+            const wins = electron.BrowserWindow.getAllWindows();
+            for (const win of wins) {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('agy:proxy:models-updated', data);
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('[ProxyIPC] Failed to broadcast models-updated:', err.message);
+    }
+}
+
 async function getOrStartProxy(options = {}) {
     if (activeProxyInstance) {
         return activeProxyInstance;
@@ -28,6 +45,7 @@ async function getOrStartProxy(options = {}) {
         ...options,
         proxyConfigRepo
     });
+    proxy.on('models-updated', broadcastModelsUpdated);
     activeProxyInstance = await proxy.start();
     return activeProxyInstance;
 }
@@ -80,12 +98,25 @@ function notifyNetworkOnline() {
     }
 }
 
+function getCachedModels(email) {
+    if (activeProxyInstance && activeProxyInstance.proxy && typeof activeProxyInstance.proxy.getCachedModels === 'function') {
+        return activeProxyInstance.proxy.getCachedModels(email);
+    }
+    try {
+        const repo = new ModelsCacheRepository();
+        return repo.load(email) || { models: {} };
+    } catch (e) {
+        return { models: {} };
+    }
+}
+
 function registerProxyIpc(ipcMain) {
     registerProxyIpcCore(ipcMain, {
         getUsage: getLatestProxyUsage,
         getQuotas: getLatestProxyQuotas,
         onProxyConfigChanged: updateActiveProxy,
-        notifyOnline: notifyNetworkOnline
+        notifyOnline: notifyNetworkOnline,
+        getCachedModels: getCachedModels
     });
 }
 
@@ -105,6 +136,8 @@ module.exports = {
     getLatestProxyUsage,
     getLatestProxyQuotas,
     notifyNetworkOnline,
+    getCachedModels,
+    broadcastModelsUpdated,
     loadProxyConfig,
     saveProxyConfig,
     testProxyConnection,

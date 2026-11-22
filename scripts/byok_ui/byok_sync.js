@@ -88,7 +88,49 @@ class ByokModelSync {
         // The language server can rehydrate an older BYOK entry before this renderer
         // has seen it. Tag and namespace identify our entries across reloads.
         const isOwned = c => ownedIds.has(c.modelId) || c.tagTitle === 'BYOK' || String(c.modelId || '').startsWith('byok-variant-') || String(c.modelId || '').startsWith('byok-');
-        const nonByokConfigs = existingConfigs.filter(c => !isOwned(c));
+        let nonByokConfigs = existingConfigs.filter(c => !isOwned(c));
+
+        // Recovery & Persistence: save authentic native models or rehydrate when Go LS pushed empty list
+        if (nonByokConfigs.length > 0) {
+            this._cachedNativeConfigs = nonByokConfigs;
+            try {
+                if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem('agy_cached_native_configs', JSON.stringify(nonByokConfigs, (k, v) => typeof v === 'bigint' ? v.toString() : v));
+                }
+            } catch (_) {}
+        } else {
+            // nonByokConfigs is empty! (Go LS offline or dormant push)
+            // 1. Try memory cache
+            if (Array.isArray(this._cachedNativeConfigs) && this._cachedNativeConfigs.length > 0) {
+                nonByokConfigs = this._cachedNativeConfigs;
+            }
+            // 2. Try localStorage cache
+            if (nonByokConfigs.length === 0 && typeof localStorage !== 'undefined') {
+                try {
+                    const raw = localStorage.getItem('agy_cached_native_configs');
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                            nonByokConfigs = parsed;
+                            this._cachedNativeConfigs = nonByokConfigs;
+                        }
+                    }
+                } catch (_) {}
+            }
+            // 3. Try proxy cached models via agyBridge
+            if (nonByokConfigs.length === 0 && typeof window !== 'undefined' && window.agyBridge && typeof window.agyBridge.getCachedModels === 'function') {
+                try {
+                    const snap = window.agyBridge.getCachedModels();
+                    if (snap && snap.clientModelConfigs && Array.isArray(snap.clientModelConfigs) && snap.clientModelConfigs.length > 0) {
+                        nonByokConfigs = snap.clientModelConfigs.filter(c => !isOwned(c));
+                        if (nonByokConfigs.length > 0) {
+                            this._cachedNativeConfigs = nonByokConfigs;
+                        }
+                    }
+                } catch (_) {}
+            }
+        }
+
         const staleLabels = existingConfigs.filter(isOwned).map(c => c.label);
         const nativeLabels = new Set(nonByokConfigs.map(c => c.label));
         const available = active.filter(v => !nativeLabels.has(v.label));
@@ -576,16 +618,23 @@ class ByokModelSync {
     static hookUserStatusProvider(controller = null) {
         try {
             const usp = this.getUserStatusProvider();
-            if (!usp || usp.__agyByokHooked) return;
-            usp.__agyByokHooked = true;
-
-            const origPushUpdate = usp.pushUpdate.bind(usp);
+            if (!usp) return;
+            if (!usp._agyOrigPushUpdate) {
+                usp._agyOrigPushUpdate = usp.pushUpdate.bind(usp);
+            }
+            const origPushUpdate = usp._agyOrigPushUpdate;
             usp.pushUpdate = function(newState) {
                 try {
                     const currentEmail = (newState && (newState.email || newState.user?.email)) || null;
                     if (currentEmail && ByokModelSync._lastUserEmail && currentEmail !== ByokModelSync._lastUserEmail) {
                         ByokModelSync._knownIds = new Set();
                         ByokModelSync._knownLabels = new Set();
+                        ByokModelSync._cachedNativeConfigs = null;
+                        try {
+                            if (typeof localStorage !== 'undefined') {
+                                localStorage.removeItem('agy_cached_native_configs');
+                            }
+                        } catch (_) {}
                     }
                     if (currentEmail) {
                         ByokModelSync._lastUserEmail = currentEmail;
@@ -678,7 +727,7 @@ class ByokModelSync {
     /**
      * Injects configured BYOK models into Antigravity's live userStatus state
      */
-    static syncToReact(variants = [], isMasterEnabled = true) {
+    static syncToReact(variants = null, isMasterEnabled = null) {
         try {
             const usp = this.getUserStatusProvider();
             if (!usp || typeof usp.getState !== 'function' || typeof usp.pushUpdate !== 'function') {
@@ -708,7 +757,15 @@ class ByokModelSync {
                 };
             }
 
-            this._patchStateWithByok(newState, variants, isMasterEnabled);
+            const activeController = (typeof window !== 'undefined' ? window.agyByokController : null);
+            const resolvedVariants = (Array.isArray(variants) && variants.length > 0)
+                ? variants
+                : (activeController?.chatModelVariants || []);
+            const resolvedMasterEnabled = (typeof isMasterEnabled === 'boolean')
+                ? isMasterEnabled
+                : (activeController?.config?.enabled !== false);
+
+            this._patchStateWithByok(newState, resolvedVariants, resolvedMasterEnabled);
             usp.pushUpdate(newState);
             this._ensureWatchdog();
             return true;
@@ -756,6 +813,56 @@ class ByokModelSync {
             }
         };
         this._watchdogTimer = setTimeout(check, 5000);
+    }
+
+    /**
+     * Autonomous liveness recovery watchdog:
+     * When Go LS has crashed, is dormant, or pushed empty model configs after network failure,
+     * this watchdog detects the empty/missing state in React Fiber and automatically triggers
+     * rehydration from the cached models.
+     */
+    static startRecoveryWatchdog() {
+        if (typeof window === 'undefined' || this._recoveryWatchdogStarted) return;
+        this._recoveryWatchdogStarted = true;
+        const check = () => {
+            try {
+                const usp = ByokModelSync.getUserStatusProvider();
+                if (usp && typeof usp.getState === 'function') {
+                    const state = usp.getState();
+                    const cfgs = state?.cascadeModelConfigData?.clientModelConfigs;
+                    if (Array.isArray(cfgs)) {
+                        const nativeCount = cfgs.filter(c => !String(c.modelId || '').startsWith('byok-') && c.tagTitle !== 'BYOK').length;
+                        if (cfgs.length === 0 || nativeCount === 0) {
+                            console.log('[ByokModelSync] Recovery watchdog: 0 native models in React state, triggering recovery sync');
+                            if (window.agyBridge && typeof window.agyBridge.notifyNetworkOnline === 'function') {
+                                window.agyBridge.notifyNetworkOnline().catch(() => {});
+                            }
+                            ByokModelSync.syncToReact();
+                        }
+                    }
+                }
+            } catch (_) {}
+        };
+        const timer = setInterval(check, 8000);
+        if (timer && typeof timer.unref === 'function') {
+            timer.unref();
+        }
+    }
+}
+
+// Top-level IPC & watchdog registration
+if (typeof window !== 'undefined') {
+    try {
+        if (window.agyBridge && typeof window.agyBridge.onModelsUpdated === 'function' && !window.__agyModelsUpdatedHooked) {
+            window.__agyModelsUpdatedHooked = true;
+            window.agyBridge.onModelsUpdated((data) => {
+                console.log('[ByokModelSync] Models-updated signal received from proxy:', data);
+                ByokModelSync.syncToReact();
+            });
+        }
+        ByokModelSync.startRecoveryWatchdog();
+    } catch (e) {
+        console.warn('[ByokModelSync] Error initializing top-level listeners:', e);
     }
 }
 

@@ -20,5 +20,7 @@ module.exports = {
     saveProxyConfig: proxyModule.saveProxyConfig,
     testProxyConnection: proxyModule.testProxyConnection,
     registerProxyIpc: proxyModule.registerProxyIpc,
+    getCachedModels: proxyModule.getCachedModels,
+    broadcastModelsUpdated: proxyModule.broadcastModelsUpdated,
     AuthRefresher: proxyModule.AuthRefresher
 };

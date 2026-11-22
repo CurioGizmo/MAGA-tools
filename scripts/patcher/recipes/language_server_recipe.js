@@ -89,8 +89,7 @@ function applyLanguageServerRecipe(targetDir) {
             return { alreadyPatched: true };
         }
         const targetPromise = 'return new Promise((resolve, reject) => {';
-        const targetEndpoint = "'https://daily-cloudcode-pa.googleapis.com',";
-        if (content.includes(targetPromise) && content.includes(targetEndpoint)) {
+        if (content.includes(targetPromise)) {
             const proxyHook = `return new Promise(async (resolve, reject) => {
         let cloudCodeEndpointUrl = 'https://daily-cloudcode-pa.googleapis.com';
         try {
@@ -108,9 +107,24 @@ function applyLanguageServerRecipe(targetDir) {
             }
         } catch (e) {
             console.error('[Patch] Failed to start CloudCode proxy, falling back:', e);
-        }`;
+        }
+        try {
+            if (typeof lsDefaults_1 !== 'undefined') {
+                lsDefaults_1.LS_CLOUD_CODE_ENDPOINT = cloudCodeEndpointUrl;
+            }
+        } catch (_) {}`;
             let patched = content.replace(targetPromise, proxyHook);
-            patched = patched.replace(targetEndpoint, 'cloudCodeEndpointUrl,');
+            const targetEndpoint = "'https://daily-cloudcode-pa.googleapis.com',";
+            if (patched.includes(targetEndpoint)) {
+                patched = patched.replace(targetEndpoint, 'cloudCodeEndpointUrl,');
+            } else {
+                // Modern Antigravity (2.28+): baseLsArgs is used. Also patch args array after declaration as safety net.
+                const argsRegex = /'--enable_sidecars',(\r?\n\s*\];)/;
+                if (argsRegex.test(patched)) {
+                    const argsFix = `'--enable_sidecars',$1\n        const _ccIdx = args.indexOf('--cloud_code_endpoint');\n        if (_ccIdx !== -1 && _ccIdx + 1 < args.length) {\n            args[_ccIdx + 1] = cloudCodeEndpointUrl;\n        }`;
+                    patched = patched.replace(argsRegex, argsFix);
+                }
+            }
             return { modified: true, content: patched };
         }
         return { modified: false };
@@ -148,9 +162,14 @@ function applyLanguageServerRecipe(targetDir) {
         if (oldDbusOnly.test(content)) {
             return { modified: true, content: content.replace(oldDbusOnly, keyringBlock) };
         }
-        const marker = 'const env = { ...process.env, ...(0, shell_env_1.shellEnvSync)() };';
-        if (content.includes(marker)) {
-            return { modified: true, content: content.replace(marker, `${marker}\n        ${keyringBlock}`) };
+        const envMarkers = [
+            'const env = { ...process.env, ...loginShellEnv };',
+            'const env = { ...process.env, ...(0, shell_env_1.shellEnvSync)() };'
+        ];
+        for (const marker of envMarkers) {
+            if (content.includes(marker)) {
+                return { modified: true, content: content.replace(marker, `${marker}\n        ${keyringBlock}`) };
+            }
         }
         return { modified: false };
     });
@@ -160,10 +179,15 @@ function applyLanguageServerRecipe(targetDir) {
         if (content.includes('// Patched: inject proxy env vars')) {
             return { alreadyPatched: true };
         }
-        const marker = 'const env = { ...process.env, ...(0, shell_env_1.shellEnvSync)() };';
-        if (content.includes(marker)) {
-            const proxyEnvInjection = `\n        // Patched: inject proxy env vars\n        try {\n            let proxyRepo;\n            try { proxyRepo = new (require('./proxy').ProxyConfigRepository)(); }\n            catch (_) {\n                try { proxyRepo = new (require('./cloudcode_proxy').ProxyConfigRepository)(); } catch (__) {}\n            }\n            if (proxyRepo) {\n                const pConf = proxyRepo.load();\n                if (pConf && pConf.enabled) {\n                    Object.assign(env, proxyRepo.toEnv(pConf));\n                }\n            }\n        } catch (e) {\n            console.error('[Patch] Failed to inject proxy env for language_server:', e);\n        }`;
-            return { modified: true, content: content.replace(marker, marker + proxyEnvInjection) };
+        const envMarkers = [
+            'const env = { ...process.env, ...loginShellEnv };',
+            'const env = { ...process.env, ...(0, shell_env_1.shellEnvSync)() };'
+        ];
+        for (const marker of envMarkers) {
+            if (content.includes(marker)) {
+                const proxyEnvInjection = `\n        // Patched: inject proxy env vars\n        try {\n            let proxyRepo;\n            try { proxyRepo = new (require('./proxy').ProxyConfigRepository)(); }\n            catch (_) {\n                try { proxyRepo = new (require('./cloudcode_proxy').ProxyConfigRepository)(); } catch (__) {}\n            }\n            if (proxyRepo) {\n                const pConf = proxyRepo.load();\n                if (pConf && pConf.enabled) {\n                    Object.assign(env, proxyRepo.toEnv(pConf));\n                }\n            }\n        } catch (e) {\n            console.error('[Patch] Failed to inject proxy env for language_server:', e);\n        }`;
+                return { modified: true, content: content.replace(marker, marker + proxyEnvInjection) };
+            }
         }
         return { modified: false };
     });

@@ -133,9 +133,19 @@ function applyIpcRecipe(targetDir) {
     }
 `;
 
-        const anchor = "electron_1.ipcMain.handle('ide:is-installed'";
-        if (cleanContent.includes(anchor)) {
-            const anchorIdx = cleanContent.indexOf(anchor);
+        const anchors = [
+            "localOnly('ide:is-installed'",
+            "electron_1.ipcMain.handle('ide:is-installed'"
+        ];
+        let foundAnchor = null;
+        for (const a of anchors) {
+            if (cleanContent.includes(a)) {
+                foundAnchor = a;
+                break;
+            }
+        }
+        if (foundAnchor) {
+            const anchorIdx = cleanContent.indexOf(foundAnchor);
             const closeHandlerIdx = cleanContent.indexOf('});', anchorIdx);
             if (closeHandlerIdx !== -1) {
                 const insertPos = closeHandlerIdx + 3;

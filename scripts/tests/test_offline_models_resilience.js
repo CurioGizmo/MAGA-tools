@@ -290,8 +290,102 @@ async function run() {
             ByokModelSync.getUserStatusProvider = origGetUserStatusProvider;
         }
 
+        // -----------------------------------------------------------------
+        // Test 8: CloudCodeProxy emits models-updated and supports getCachedModels
+        // -----------------------------------------------------------------
+        console.log('\n--- Test 8: CloudCodeProxy models-updated event & getCachedModels ---');
+        const modelsCacheRepo8 = new ModelsCacheRepository(modelsFile);
+        modelsCacheRepo8.save({
+            models: {
+                'gemini-3.8-flash': { displayName: 'Gemini 3.8 Flash' },
+                'claude-sonnet-4-6': { displayName: 'Claude Sonnet 4.6' }
+            }
+        }, 'test@example.com');
+
+        const proxy8 = new CloudCodeProxy({
+            modelsCacheRepo: modelsCacheRepo8,
+            activeEmail: 'test@example.com'
+        });
+
+        let modelsUpdatedFired = false;
+        let eventPayload = null;
+        proxy8.on('models-updated', (data) => {
+            modelsUpdatedFired = true;
+            eventPayload = data;
+        });
+
+        const mockRes8 = {
+            headersSent: false,
+            writableEnded: false,
+            writeHead: () => {},
+            end: () => {}
+        };
+        const servedFallback = proxy8._serveCachedModelsFallback(mockRes8, 'unit-test');
+        assert.ok(servedFallback, 'Should serve cached models fallback');
+        assert.ok(modelsUpdatedFired, 'models-updated event must fire on fallback serve');
+        assert.strictEqual(eventPayload.email, 'test@example.com');
+        assert.ok(eventPayload.count >= 2);
+
+        const cachedFromMethod = proxy8.getCachedModels('test@example.com');
+        assert.ok(cachedFromMethod.models['gemini-3.8-flash'], 'getCachedModels must return cached models');
+        console.log('[✓] CloudCodeProxy emits models-updated and provides getCachedModels');
+
+        // -----------------------------------------------------------------
+        // Test 9: ByokModelSync restores native models on empty clientModelConfigs
+        // -----------------------------------------------------------------
+        console.log('\n--- Test 9: ByokModelSync restores native models on empty clientModelConfigs ---');
+        ByokModelSync._cachedNativeConfigs = [
+            { modelId: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash (High)' },
+            { modelId: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)' }
+        ];
+
+        const emptyLsState = {
+            cascadeModelConfigData: {
+                clientModelConfigs: [], // LS sent empty array during outage
+                clientModelSorts: []
+            }
+        };
+
+        const patchedState = ByokModelSync._patchStateWithByok(emptyLsState, [
+            { id: 'byok-1', label: 'BYOK Model', slot: 'MODEL_PLACEHOLDER_M401', slotInt: 1401 }
+        ], true);
+
+        const restoredConfigs = patchedState.cascadeModelConfigData.clientModelConfigs;
+        const restoredNative = restoredConfigs.filter(c => !c.modelId.startsWith('byok-') && c.tagTitle !== 'BYOK');
+        const restoredByok = restoredConfigs.filter(c => c.modelId.startsWith('byok-') || c.tagTitle === 'BYOK');
+
+        assert.strictEqual(restoredNative.length, 2, 'Must restore 2 native models from cache');
+        assert.strictEqual(restoredByok.length, 1, 'Must attach 1 BYOK model');
+        assert.strictEqual(restoredConfigs.length, 3, 'Total models must be 3');
+        console.log('[✓] ByokModelSync successfully rehydrates native models when Go LS pushes []');
+
+        // -----------------------------------------------------------------
+        // Test 10: ByokModelSync account switch wipes _cachedNativeConfigs
+        // -----------------------------------------------------------------
+        console.log('\n--- Test 10: Account switch invalidates _cachedNativeConfigs ---');
+        ByokModelSync._cachedNativeConfigs = [{ modelId: 'gemini-user-a', label: 'Gemini User A' }];
+        ByokModelSync._lastUserEmail = 'userA@example.com';
+
+        const mockUsp10 = {
+            getState: () => ({ email: 'userB@example.com', cascadeModelConfigData: { clientModelConfigs: [] } }),
+            pushUpdate: function(state) { this.lastState = state; }
+        };
+        const origUsp10 = ByokModelSync.getUserStatusProvider;
+        ByokModelSync.getUserStatusProvider = () => mockUsp10;
+        try {
+            ByokModelSync.hookUserStatusProvider();
+            mockUsp10.pushUpdate({
+                email: 'userB@example.com',
+                cascadeModelConfigData: { clientModelConfigs: [] }
+            });
+            assert.strictEqual(ByokModelSync._cachedNativeConfigs, null, '_cachedNativeConfigs must be null on account switch');
+            console.log('[✓] Account switch cleanly invalidates cached native configs');
+        } finally {
+            ByokModelSync.getUserStatusProvider = origUsp10;
+        }
+
         console.log('\n======================================================');
-        console.log('  ALL OFFLINE MODELS RESILIENCE TESTS PASSED (7/7)');
+        console.log('  ALL OFFLINE MODELS RESILIENCE TESTS PASSED (10/10)');
         console.log('======================================================\n');
     } finally {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}

@@ -127,12 +127,18 @@ async function main() {
     fs.mkdirSync(buildDir, { recursive: true });
 
     const tempPatched = path.join(__dirname, '..', 'app.asar.patched.tmp');
-    const asarCmd = getAsarCmd();
 
     try {
         // 3. Extract asar from clean base
         console.log(`[+] Extracting base from: ${baseAsar}...`);
-        execSync(`${asarCmd} extract "${baseAsar}" "${buildDir}"`, { stdio: 'inherit' });
+        try {
+            const asar = require('@electron/asar');
+            asar.extractAll(baseAsar, buildDir);
+        } catch (extractErr) {
+            console.log(`[*] Direct extractAll failed (${extractErr.message}), falling back to CLI...`);
+            const asarCmd = getAsarCmd();
+            execSync(`${asarCmd} extract "${baseAsar}" "${buildDir}"`, { stdio: 'inherit' });
+        }
 
         // 4. Apply patches
         console.log('[+] Applying patcher modifications...');
@@ -143,7 +149,16 @@ async function main() {
 
         // 5. Pack asar (with unpack-dir to keep native modules external)
         console.log(`[+] Repacking to ${tempPatched}...`);
-        execSync(`${asarCmd} pack "${buildDir}" "${tempPatched}" --unpack-dir "node_modules/chrome-devtools-mcp"`, { stdio: 'inherit' });
+        try {
+            const asar = require('@electron/asar');
+            await asar.createPackageWithOptions(buildDir, tempPatched, {
+                unpackDir: 'node_modules/chrome-devtools-mcp'
+            });
+        } catch (packErr) {
+            console.log(`[*] Direct createPackageWithOptions failed (${packErr.message}), falling back to CLI...`);
+            const asarCmd = getAsarCmd();
+            execSync(`${asarCmd} pack "${buildDir}" "${tempPatched}" --unpack-dir "node_modules/chrome-devtools-mcp"`, { stdio: 'inherit' });
+        }
 
         const size = fs.statSync(tempPatched).size;
         console.log(`[+] Patched archive size: ${size} bytes (~${(size / (1024 * 1024)).toFixed(2)} MB)`);
