@@ -140,8 +140,10 @@ try {
     const persisted = JSON.parse(fs.readFileSync(CALIB_PATH, 'utf8'));
     assert(persisted.models && persisted.models['gemini-test-model'], 'Persisted model entry must exist');
     assert.strictEqual(persisted.models['gemini-test-model'].ratio, 2, 'Persisted ratio must be 2');
-    const mode = (fs.statSync(CALIB_PATH).mode & 0o777);
-    assert.strictEqual(mode, 0o600, `Calibration store must be 0600, got 0${mode.toString(8)}`);
+    if (process.platform !== 'win32') {
+        const mode = (fs.statSync(CALIB_PATH).mode & 0o777);
+        assert.strictEqual(mode, 0o600, `Calibration store must be 0600, got 0${mode.toString(8)}`);
+    }
 
     // estimateTokensForModel honors the calibrated ratio
     assert.strictEqual(estimator.estimateTokensForModel('a'.repeat(2000), 'gemini-test-model'), 1000,

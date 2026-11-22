@@ -9,12 +9,12 @@
 **Комплексный набор инструментов и расширений для Google Antigravity 2.**  
 Мониторинг токенов и контекста в реальном времени, внешние модели (BYOK), поддержка нескольких Google-аккаунтов с выбором профиля, управление моделями субагентов, панель быстрых команд и встроенный менеджер прокси.
 
-[![Version](https://img.shields.io/badge/версия-v1.0.0-3b82f6.svg?style=flat-square)](package.json)
+[![Version](https://img.shields.io/badge/версия-v1.0.1-3b82f6.svg?style=flat-square)](package.json)
 [![Antigravity](https://img.shields.io/badge/antigravity-v2.14%20--%20v2.27+-10b981.svg?style=flat-square)](patch_manifest.json)
 [![Platform](https://img.shields.io/badge/платформа-Linux%20%7C%20Windows-8b5cf6.svg?style=flat-square)](#️-установка-патчинг-и-откат)
 [![License](https://img.shields.io/badge/лицензия-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Integration](https://img.shields.io/badge/интеграция-100%25%20Нативная-f97316.svg?style=flat-square)](#️-архитектурные-принципы)
-[![Tests](https://img.shields.io/badge/тесты-42%20пройдено-emerald.svg?style=flat-square)](AGENTS.md)
+[![Tests](https://img.shields.io/badge/тесты-54%20пройдено-emerald.svg?style=flat-square)](AGENTS.md)
 
 🌐 [English](README.md) • **Русский**
 

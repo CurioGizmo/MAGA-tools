@@ -127,8 +127,10 @@ try {
     const t1 = new ByokCostTracker(persistPath);
     t1.recordUsage('gpt-4o', { promptTokens: 1000, outputTokens: 100 }, PRICE_CATALOG.openai['gpt-4o']);
     assert(fs.existsSync(persistPath), 'Store file must be written');
-    const mode = fs.statSync(persistPath).mode & 0o777;
-    assert.strictEqual(mode, 0o600, `Store must be 0600, got 0${mode.toString(8)}`);
+    if (process.platform !== 'win32') {
+        const mode = fs.statSync(persistPath).mode & 0o777;
+        assert.strictEqual(mode, 0o600, `Store must be 0600, got 0${mode.toString(8)}`);
+    }
     const reloaded = new ByokCostTracker(persistPath);
     assert.strictEqual(reloaded.getMonthlySummary('gpt-4o').requests, 1, 'Reload must restore counters');
     assert.ok(Math.abs(reloaded.getMonthlySummary('gpt-4o').cost - 0.0035) < 1e-9, 'Reload must restore cost');

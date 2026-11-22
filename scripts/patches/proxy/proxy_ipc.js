@@ -36,6 +36,15 @@ function registerProxyIpc(ipcMain, options = {}) {
         } catch (e) {}
     });
 
+    const notifyOnline = options.notifyOnline || (() => {
+        try {
+            const { notifyNetworkOnline } = require('../cloudcode_proxy');
+            if (typeof notifyNetworkOnline === 'function') {
+                notifyNetworkOnline();
+            }
+        } catch (e) {}
+    });
+
     const proxyRepo = new ProxyConfigRepository();
 
     // 1. Live Telemetry Handlers
@@ -121,6 +130,15 @@ function registerProxyIpc(ipcMain, options = {}) {
             return await testProxyConnection(target, 8000);
         } catch (e) {
             console.error('[ProxyIPC] Failed to test connection:', e);
+            return { success: false, error: e.message };
+        }
+    });
+
+    ipcMain.handle('agy:proxy:notify-online', () => {
+        try {
+            notifyOnline();
+            return { success: true };
+        } catch (e) {
             return { success: false, error: e.message };
         }
     });

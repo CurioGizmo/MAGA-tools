@@ -74,15 +74,23 @@ function saveProxyConfig(config) {
     return res;
 }
 
+function notifyNetworkOnline() {
+    if (activeProxyInstance && activeProxyInstance.proxy && typeof activeProxyInstance.proxy.notifyNetworkOnline === 'function') {
+        activeProxyInstance.proxy.notifyNetworkOnline();
+    }
+}
+
 function registerProxyIpc(ipcMain) {
     registerProxyIpcCore(ipcMain, {
         getUsage: getLatestProxyUsage,
         getQuotas: getLatestProxyQuotas,
-        onProxyConfigChanged: updateActiveProxy
+        onProxyConfigChanged: updateActiveProxy,
+        notifyOnline: notifyNetworkOnline
     });
 }
 
 const { ModelsCacheRepository } = require('./models_cache_repository');
+const { TransientShieldRepository } = require('./transient_shield_repository');
 
 module.exports = {
     CloudCodeProxy,
@@ -90,11 +98,13 @@ module.exports = {
     UpstreamTunnelAgent,
     ProxyConfigRepository,
     ModelsCacheRepository,
+    TransientShieldRepository,
     getOrStartProxy,
     getActiveProxyInstance,
     updateActiveProxy,
     getLatestProxyUsage,
     getLatestProxyQuotas,
+    notifyNetworkOnline,
     loadProxyConfig,
     saveProxyConfig,
     testProxyConnection,

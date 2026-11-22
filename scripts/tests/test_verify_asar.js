@@ -1,11 +1,11 @@
-const fs = require('fs');
 const asar = require('@electron/asar');
+const fs = require('fs');
 const path = require('path');
 const asarPath = path.join(__dirname, '../../app.asar.patched');
 
 if (!fs.existsSync(asarPath)) {
-    console.log(`[SKIP] Patched ASAR archive not found at ${asarPath}.`);
-    console.log('       (Run "npm run build" with Antigravity installed to test full ASAR extraction).');
+    console.log('=== Verifying Patched ASAR Integrity ===\n');
+    console.log('[SKIP] app.asar.patched not found (clean checkout or CI environment without built binary artifact).');
     process.exit(0);
 }
 

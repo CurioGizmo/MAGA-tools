@@ -22,8 +22,13 @@ try {
  *  - all discovered Antigravity resources dirs (paths SSOT, Rule 3);
  *  - the resources dir next to this module (in-asar layout: dist/../).
  */
-function findCanaryStateFiles() {
+function findCanaryStateFiles(targetDir = null) {
     const files = [];
+    if (targetDir) {
+        const f = path.join(targetDir, 'canary_state.json');
+        if (fs.existsSync(f)) files.push(f);
+        return files;
+    }
     if (pathsModule && pathsModule.getAntigravityResourcesDirs) {
         try {
             for (const dir of pathsModule.getAntigravityResourcesDirs()) {
@@ -43,9 +48,9 @@ function findCanaryStateFiles() {
  * from a previous installation (Google auto-update) is downgraded to
  * 'unknown' instead of producing a false verdict.
  */
-function getCanaryVerdict() {
+function getCanaryVerdict(targetDir = null) {
     try {
-        const files = findCanaryStateFiles();
+        const files = findCanaryStateFiles(targetDir);
         if (files.length === 0) return { level: 'full', reason: 'no canary state (legacy install)' };
         const raw = fs.readFileSync(files[0], 'utf8');
         const payload = JSON.parse(raw);

@@ -14,7 +14,13 @@ class ModelsCacheRepository {
     }
 
     getDefaultCachePath() {
-        const dir = path.join(os.homedir(), ".gemini", "antigravity");
+        if (process.env.AGY_MODELS_CACHE_PATH) return process.env.AGY_MODELS_CACHE_PATH;
+        let dir;
+        try {
+            dir = require('../../utils/paths').getMagaDataDir();
+        } catch (_) {
+            dir = path.join(os.homedir(), ".gemini", "antigravity");
+        }
         try {
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true, mode: 0o700 });

@@ -71,6 +71,14 @@ function probeAsarVersion(asarPath) {
         const raw = asar.extractFile(asarPath, 'package.json');
         const parsed = JSON.parse(raw.toString('utf8'));
         if (parsed && parsed.version) return parsed.version;
+    } catch (_) { /* fall through to pure asar parser */ }
+    try {
+        const { extractFileFromAsar } = require('./asar_pure');
+        const raw = extractFileFromAsar(asarPath, 'package.json');
+        if (raw) {
+            const parsed = JSON.parse(raw.toString('utf8'));
+            if (parsed && parsed.version) return parsed.version;
+        }
     } catch (_) { /* fall through to buffer probe */ }
     try {
         const buf = Buffer.alloc(2 * 1024 * 1024);
@@ -105,6 +113,13 @@ function extractFileText(asarPath, relPath) {
         const raw = asar.extractFile(asarPath, relPath);
         return raw.toString('utf8');
     } catch (e) {
+        // Zero-dependency pure JS asar reader fallback
+        try {
+            const { extractFileFromAsar } = require('./asar_pure');
+            const raw = extractFileFromAsar(asarPath, relPath);
+            if (raw) return raw.toString('utf8');
+        } catch (_) {}
+
         const code = (e && (e.code || e.errno)) || '';
         // Module resolution failure vs archive entry absence:
         // the former means tooling is unavailable (unknown), the latter is

@@ -582,6 +582,14 @@ class ByokModelSync {
             const origPushUpdate = usp.pushUpdate.bind(usp);
             usp.pushUpdate = function(newState) {
                 try {
+                    const currentEmail = (newState && (newState.email || newState.user?.email)) || null;
+                    if (currentEmail && ByokModelSync._lastUserEmail && currentEmail !== ByokModelSync._lastUserEmail) {
+                        ByokModelSync._knownIds = new Set();
+                        ByokModelSync._knownLabels = new Set();
+                    }
+                    if (currentEmail) {
+                        ByokModelSync._lastUserEmail = currentEmail;
+                    }
                     const activeController = controller || (typeof window !== 'undefined' ? window.agyByokController : null);
                     ByokModelSync._patchStateWithByok(newState, activeController?.chatModelVariants || [], activeController?.config?.enabled !== false);
                 } catch (err) {
@@ -589,6 +597,29 @@ class ByokModelSync {
                 }
                 return origPushUpdate(newState);
             };
+
+            // Online event listener: when network connectivity recovers, notify the proxy
+            // to reset its backoffs and refetch, and reload BYOK config to resync UI.
+            if (typeof window !== 'undefined' && !window.__agyByokOnlineHooked) {
+                window.__agyByokOnlineHooked = true;
+                let onlineDebounce = null;
+                window.addEventListener('online', () => {
+                    if (onlineDebounce) clearTimeout(onlineDebounce);
+                    onlineDebounce = setTimeout(() => {
+                        onlineDebounce = null;
+                        console.log('[ByokModelSync] Window online event: notifying proxy and reloading config');
+                        try {
+                            if (window.agyBridge && typeof window.agyBridge.notifyNetworkOnline === 'function') {
+                                window.agyBridge.notifyNetworkOnline();
+                            }
+                        } catch (_) {}
+                        const activeController = controller || (typeof window !== 'undefined' ? window.agyByokController : null);
+                        if (activeController && typeof activeController.loadConfig === 'function') {
+                            activeController.loadConfig().catch(() => {});
+                        }
+                    }, 1500);
+                });
+            }
 
             // Paste-gate repair: the frontend validates pasted media at paste
             // time (bundle fn RKa) against currentModelConfig.supportedMimeTypes.

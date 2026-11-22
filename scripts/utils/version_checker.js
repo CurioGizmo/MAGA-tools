@@ -34,6 +34,16 @@ function getAsarVersionFromFile(asarFilePath) {
         } catch (e) {}
     }
 
+    // Pure JS asar parser (zero-dependency fallback, reads accurate package.json at any offset)
+    try {
+        const { extractFileFromAsar } = require('./asar_pure');
+        const rawPkg = extractFileFromAsar(asarFilePath, 'package.json');
+        if (rawPkg) {
+            const parsed = JSON.parse(rawPkg.toString('utf8'));
+            if (parsed && parsed.version) return parsed.version;
+        }
+    } catch (_) {}
+
     // Fast buffer probe fallback (works without @electron/asar module)
     try {
         const buf = Buffer.alloc(131072);

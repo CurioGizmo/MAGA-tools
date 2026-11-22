@@ -79,19 +79,19 @@ class SettingsByokObserver extends _SettingsTabObserverByok {
         if (this.controller) {
             if (typeof this.controller.loadConfig === "function") {
                 this.controller.loadConfig().then(() => {
-                    if (typeof ByokModelSync !== "undefined") {
-                        ByokModelSync.syncToReact(this.controller.config?.models, this.controller.config?.enabled);
+                    if (typeof this.controller._syncToUI === "function") {
+                        this.controller._syncToUI();
                     }
                 }).catch(() => {});
             }
             setTimeout(() => {
-                if (typeof ByokModelSync !== "undefined") {
-                    ByokModelSync.syncToReact(this.controller.config?.models, this.controller.config?.enabled);
+                if (typeof this.controller._syncToUI === "function") {
+                    this.controller._syncToUI();
                 }
             }, 1000);
             setTimeout(() => {
-                if (typeof ByokModelSync !== "undefined") {
-                    ByokModelSync.syncToReact(this.controller.config?.models, this.controller.config?.enabled);
+                if (typeof this.controller._syncToUI === "function") {
+                    this.controller._syncToUI();
                 }
             }, 3000);
         }

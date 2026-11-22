@@ -10,6 +10,7 @@ const { SseStreamParser } = require('./sse_parser');
 const { PayloadSniffer } = require('./payload_sniffer');
 const { UsageCacheRepository } = require('./cache_repository');
 const { ModelsCacheRepository } = require('./models_cache_repository');
+const { TransientShieldRepository } = require('./transient_shield_repository');
 const { UpstreamTunnelAgent } = require('./upstream_tunnel');
 const { ProxyConfigRepository } = require('./proxy_config_repository');
 const { AuthRefresher } = require('./auth_refresher');
@@ -42,6 +43,8 @@ class CloudCodeProxy {
         this.tracker = options.tracker || new SessionUsageTracker();
         this.cacheRepo = options.cacheRepo || new UsageCacheRepository(options.cacheFile);
         this.modelsCacheRepo = options.modelsCacheRepo || new ModelsCacheRepository(options.modelsCacheFile);
+        this.transientShieldRepo = options.transientShieldRepo || new TransientShieldRepository(options.transientShieldFile);
+        this.activeEmail = options.activeEmail || null;
         this.byokManager = options.byokManager || (typeof getSharedByokManager === 'function' ? getSharedByokManager() : new ByokManager());
         this.latestUsage = { promptTokens: 0, outputTokens: 0, candidatesTokens: 0, cachedTokens: 0, totalTokens: 0, thoughtsTokens: 0, modelName: '', convId: null, timestamp: 0, hasData: false };
         this.latestQuotas = {
@@ -76,12 +79,16 @@ class CloudCodeProxy {
         this._modelsRefreshIntervalMs = null;    // backoff interval override
         this._modelsRefreshFailures = 0;         // consecutive failure count
         this._modelsRefreshAuthRetried = false;  // 401 single retry latch
+        this._isRefreshingModels = false;        // single-flight lock
+        this._isRefreshingQuotas = false;        // single-flight lock
+        this._onlineDebounceTimer = null;        // debounce timer for online event
         this.listeners = new Set();
         this.usageHistory = [];
         // Transient Shield: email -> { loadCodeAssist: { data, headers, timestamp }, retrieveUserQuotaSummary: { data, headers, timestamp } }
         // TTL 10 minutes (600,000 ms). Protects against upstream network hiccups (502/ECONNRESET)
         this._transientShield = new Map();
         this._loadCacheFromDisk();
+        this._prepopulateLatestQuotas();
 
         this.proxyConfigRepo = options.proxyConfigRepo || new ProxyConfigRepository();
         this.proxyConfig = this.proxyConfigRepo.load();
@@ -117,6 +124,30 @@ class CloudCodeProxy {
         }
     }
 
+    _prepopulateLatestQuotas() {
+        try {
+            const email = this._getActiveEmail();
+            const cached = this.modelsCacheRepo ? this.modelsCacheRepo.load(email) : null;
+            if (cached && cached.models && Object.keys(cached.models).length > 0) {
+                let payload = JSON.parse(JSON.stringify(cached));
+                if (this.byokManager && typeof this.byokManager.injectAvailableModels === 'function') {
+                    payload = this.byokManager.injectAvailableModels(payload);
+                }
+                if (payload && payload.models && Object.keys(payload.models).length > 0) {
+                    this.latestQuotas = {
+                        models: payload.models,
+                        agentModelSorts: payload.agentModelSorts || [],
+                        clientModelSorts: payload.clientModelSorts || [],
+                        tabModelIds: payload.tabModelIds || [],
+                        imageGenerationModelIds: payload.imageGenerationModelIds || [],
+                        timestamp: Date.now(),
+                        hasData: true
+                    };
+                }
+            }
+        } catch (_) {}
+    }
+
     _saveCacheToDisk(immediate = false) {
         this.cacheRepo.save(this.tracker, immediate);
     }
@@ -150,6 +181,7 @@ class CloudCodeProxy {
     }
 
     _getActiveEmail() {
+        if (this.activeEmail) return String(this.activeEmail).toLowerCase().trim();
         try {
             if (this.authRefresher && typeof this.authRefresher.readTokenData === 'function') {
                 const tokenInfo = this.authRefresher.readTokenData();
@@ -639,9 +671,37 @@ class CloudCodeProxy {
 
         ctx.proxyReqRef = proxyReq;
 
+        const isMetadataRpc = isModels || ctx.isLoadCodeAssist || ctx.isQuotaSummary;
+        if (isMetadataRpc) {
+            proxyReq.setTimeout(7000);
+            proxyReq.on('timeout', () => {
+                proxyReq.destroy(Object.assign(new Error('ETIMEDOUT: metadata request timeout'), { code: 'ETIMEDOUT' }));
+            });
+        }
+
         proxyReq.on('error', (err) => {
-            if (ctx.isClientAborted) return;
             console.error('[CloudCode Proxy] Upstream request error:', err.message);
+
+            // Fast-path offline fallback: BEFORE attempting multi-second retry loops,
+            // check if a valid cached fallback can be served immediately.
+            // For metadata/discovery RPCs (fetchAvailableModels, loadCodeAssist, retrieveUserQuotaSummary),
+            // serving cached state in <1ms avoids Go LS deadline timeouts (10s) and 503 envelopes.
+            if (!res.headersSent && !res.writableEnded && !ctx.isClientAborted) {
+                if (isModels && this._serveCachedModelsFallback(res, `Upstream network error (${err.message})`)) {
+                    return;
+                }
+                if (ctx.isLoadCodeAssist && this._serveTransientShieldFallback(res, 'loadCodeAssist', `Upstream network error (${err.message})`)) {
+                    return;
+                }
+                if (ctx.isQuotaSummary && this._serveTransientShieldFallback(res, 'retrieveUserQuotaSummary', `Upstream network error (${err.message})`)) {
+                    return;
+                }
+            } else if (isModels) {
+                // If client already aborted, still ensure internal latestQuotas is kept populated from cache
+                this._prepopulateLatestQuotas();
+            }
+
+            if (ctx.isClientAborted) return;
 
             // Network resilience (plan part A): bounded retry on transient network
             // errors, only BEFORE response headers are committed (R8: body is
@@ -829,9 +889,11 @@ class CloudCodeProxy {
     invalidateTransientShield(email = null) {
         if (email) {
             this._transientShield.delete(email);
+            if (this.transientShieldRepo) this.transientShieldRepo.invalidate(email);
             console.log(`[CloudCode Proxy] Invalidate Transient Shield for ${email}`);
         } else {
             this._transientShield.clear();
+            if (this.transientShieldRepo) this.transientShieldRepo.invalidate(null);
             console.log('[CloudCode Proxy] Invalidate Transient Shield (all profiles)');
         }
     }
@@ -869,6 +931,16 @@ class CloudCodeProxy {
             headers: savedHeaders,
             timestamp: Date.now()
         };
+
+        // Persist to disk with multi-account isolation and plain UTF-8 string encoding
+        if (this.transientShieldRepo && email !== 'default') {
+            try {
+                const bodyStr = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+                this.transientShieldRepo.save(email, endpointType, bodyStr, savedHeaders);
+            } catch (e) {
+                console.warn('[CloudCode Proxy] Failed to persist transient shield:', e.message);
+            }
+        }
     }
 
     /**
@@ -878,15 +950,44 @@ class CloudCodeProxy {
      * language_server protojson parser never receives raw 0x1f 0x8b bytes.
      */
     _serveTransientShieldFallback(res, endpointType, reason) {
-        const email = this._getActiveEmail() || 'default';
-        const profileShield = this._transientShield.get(email);
+        if (!res || res.headersSent || res.writableEnded) return false;
+        const email = this._getActiveEmail();
+        const effectiveEmail = email || 'default';
+        let profileShield = this._transientShield.get(effectiveEmail);
+
+        // If not in memory, try loading from persistent disk cache for this account
+        if ((!profileShield || !profileShield[endpointType]) && this.transientShieldRepo) {
+            try {
+                const diskAccount = this.transientShieldRepo.load(email);
+                if (diskAccount && diskAccount[endpointType]) {
+                    if (!profileShield) {
+                        profileShield = {};
+                        this._transientShield.set(effectiveEmail, profileShield);
+                    }
+                    const d = diskAccount[endpointType];
+                    profileShield[endpointType] = {
+                        data: Buffer.from(d.data, 'utf8'),
+                        headers: d.headers || {},
+                        timestamp: d.timestamp || Date.now()
+                    };
+                }
+            } catch (e) {
+                console.warn('[CloudCode Proxy] Failed to load transient shield from disk:', e.message);
+            }
+        }
+
         const cached = profileShield && profileShield[endpointType];
         const TTL_MS = 10 * 60 * 1000; // 10 minutes
+        const isTransientError = networkResilience && networkResilience.isTransientNetworkError(reason);
+        // Soft-offline mode: if upstream is offline / unreachable, allow serving snapshot even if > 10m
+        const isFreshOrOffline = cached && ((Date.now() - cached.timestamp < TTL_MS) || isTransientError);
 
-        if (cached && (Date.now() - cached.timestamp < TTL_MS)) {
-            console.warn(`[CloudCode Proxy] Transient Shield activated for ${endpointType} (${email}): serving cached snapshot (${reason})`);
+        if (cached && isFreshOrOffline) {
+            console.warn(`[CloudCode Proxy] Transient Shield activated for ${endpointType} (${effectiveEmail}): serving cached snapshot (${reason})`);
             let data = cached.data;
-            if (data && data.length > 2 && data[0] === 0x1f && data[1] === 0x8b) {
+            if (typeof data === 'string') {
+                data = Buffer.from(data, 'utf8');
+            } else if (data && data.length > 2 && data[0] === 0x1f && data[1] === 0x8b) {
                 try {
                     data = zlib.gunzipSync(data);
                 } catch (_) { /* serve as-is; upstream body was already broken */ }
@@ -991,82 +1092,94 @@ class CloudCodeProxy {
      */
     async _refreshQuota5h() {
         if (this._quotaRefreshStopped) return;
-        const last = this._lastQuotaSummaryRequest;
-        if (!last || !last.url) {
-            this._scheduleQuotaRefresh();
-            return;
-        }
+        if (this._isRefreshingQuotas) return;
+        this._isRefreshingQuotas = true;
         try {
-            // Strip hop-by-hop headers from the clone: they describe the ORIGINAL
-            // client->proxy hop, not our new request, and can corrupt the replay.
-            const HOP_BY_HOP = ['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'upgrade', 'te', 'trailer'];
-            const replayHeaders = { ...last.headers };
-            for (const h of HOP_BY_HOP) delete replayHeaders[h];
-            const reqOptions = {
-                hostname: this.targetHost,
-                port: 443,
-                path: last.url,
-                method: 'POST',
-                headers: { ...replayHeaders, host: this.targetHost }
-            };
-            if (this.tunnelAgent) reqOptions.agent = this.tunnelAgent;
-            const bodyBuffer = last.body ? Buffer.from(last.body, 'utf8') : null;
-            if (bodyBuffer) reqOptions.headers['content-length'] = bodyBuffer.length;
+            const last = this._lastQuotaSummaryRequest;
+            if (!last || !last.url) {
+                this._scheduleQuotaRefresh();
+                return;
+            }
+            try {
+                // Strip hop-by-hop headers from the clone: they describe the ORIGINAL
+                // client->proxy hop, not our new request, and can corrupt the replay.
+                const HOP_BY_HOP = ['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'upgrade', 'te', 'trailer'];
+                const replayHeaders = { ...last.headers };
+                for (const h of HOP_BY_HOP) delete replayHeaders[h];
+                const reqOptions = {
+                    hostname: this.targetHost,
+                    port: 443,
+                    path: last.url,
+                    method: 'POST',
+                    headers: { ...replayHeaders, host: this.targetHost }
+                };
+                if (this.tunnelAgent) reqOptions.agent = this.tunnelAgent;
+                const bodyBuffer = last.body ? Buffer.from(last.body, 'utf8') : null;
+                if (bodyBuffer) reqOptions.headers['content-length'] = bodyBuffer.length;
 
-            await new Promise((resolve) => {
-                const proxyReq = https.request(reqOptions, (proxyRes) => {
-                    const chunks = [];
-                    proxyRes.on('data', (c) => chunks.push(c));
-                    proxyRes.on('end', () => {
-                        if (proxyRes.statusCode === 401 && !this._quotaRefreshAuthRetried) {
-                            this._quotaRefreshAuthRetried = true;
-                            resolve({ retryAuth: true });
+                await new Promise((resolve) => {
+                    const proxyReq = https.request(reqOptions, (proxyRes) => {
+                        const chunks = [];
+                        proxyRes.on('data', (c) => chunks.push(c));
+                        proxyRes.on('end', () => {
+                            if (proxyRes.statusCode === 401 && !this._quotaRefreshAuthRetried) {
+                                this._quotaRefreshAuthRetried = true;
+                                resolve({ retryAuth: true });
+                                return;
+                            }
+                            this._quotaRefreshAuthRetried = false;
+                            if (proxyRes.statusCode === 200) {
+                                this._parseQuotaSummary(chunks, proxyRes);
+                                this._quotaRefreshFailures = 0;
+                                this._quotaRefreshIntervalMs = null; // reset backoff
+                            } else if (proxyRes.statusCode === 429 || proxyRes.statusCode === 403) {
+                                this._quotaRefreshFailures = (this._quotaRefreshFailures || 0) + 1;
+                            }
+                            resolve(null);
+                        });
+                        proxyRes.on('error', () => resolve(null));
+                    });
+                    proxyReq.setTimeout(7000, () => {
+                        const err = new Error('ETIMEDOUT');
+                        err.code = 'ETIMEDOUT';
+                        proxyReq.destroy(err);
+                    });
+                    proxyReq.on('error', () => resolve(null));
+                    if (bodyBuffer) proxyReq.write(bodyBuffer);
+                    proxyReq.end();
+                });
+
+                // 401 self-healing: refresh token once, then retry immediately.
+                // The latch is NOT reset before the recursive retry — a persistently
+                // invalid token must not create an infinite refresh->401->refresh
+                // loop. It is reset only after a non-401 response (any status).
+                if (this._quotaRefreshAuthRetried) {
+                    try {
+                        const refreshRes = await this.authRefresher.refresh();
+                        if (refreshRes && refreshRes.accessToken && last.headers) {
+                            const authKey = Object.keys(last.headers).find(k => k.toLowerCase() === 'authorization') || 'authorization';
+                            last.headers[authKey] = `Bearer ${refreshRes.accessToken}`;
+                            this._isRefreshingQuotas = false;
+                            this._refreshQuota5h();
                             return;
                         }
-                        this._quotaRefreshAuthRetried = false;
-                        if (proxyRes.statusCode === 200) {
-                            this._parseQuotaSummary(chunks, proxyRes);
-                            this._quotaRefreshFailures = 0;
-                            this._quotaRefreshIntervalMs = null; // reset backoff
-                        } else if (proxyRes.statusCode === 429 || proxyRes.statusCode === 403) {
-                            this._quotaRefreshFailures = (this._quotaRefreshFailures || 0) + 1;
-                        }
-                        resolve(null);
-                    });
-                    proxyRes.on('error', () => resolve(null));
-                });
-                proxyReq.on('error', () => resolve(null));
-                if (bodyBuffer) proxyReq.write(bodyBuffer);
-                proxyReq.end();
-            });
-
-            // 401 self-healing: refresh token once, then retry immediately.
-            // The latch is NOT reset before the recursive retry — a persistently
-            // invalid token must not create an infinite refresh->401->refresh
-            // loop. It is reset only after a non-401 response (any status).
-            if (this._quotaRefreshAuthRetried) {
-                try {
-                    const refreshRes = await this.authRefresher.refresh();
-                    if (refreshRes && refreshRes.accessToken && last.headers) {
-                        const authKey = Object.keys(last.headers).find(k => k.toLowerCase() === 'authorization') || 'authorization';
-                        last.headers[authKey] = `Bearer ${refreshRes.accessToken}`;
-                        this._refreshQuota5h();
-                        return;
-                    }
-                } catch (_) {}
+                    } catch (_) {}
+                }
+            } catch (err) {
+                console.warn('[CloudCode Proxy] Quota refetch failed:', err.message);
+                this._quotaRefreshFailures = (this._quotaRefreshFailures || 0) + 1;
             }
-        } catch (err) {
-            console.warn('[CloudCode Proxy] Quota refetch failed:', err.message);
-            this._quotaRefreshFailures = (this._quotaRefreshFailures || 0) + 1;
-        }
 
-        // Backoff on repeated failures: double up to 15 min
-        if (this._quotaRefreshFailures > 0) {
-            const base = this._quotaRefreshIntervalMs || 60 * 1000;
-            this._quotaRefreshIntervalMs = Math.min(base * 2, 15 * 60 * 1000);
-            this._scheduleQuotaRefresh(this._quotaRefreshIntervalMs);
-        } else {
-            this._scheduleQuotaRefresh();
+            // Backoff on repeated failures: double up to 15 min
+            if (this._quotaRefreshFailures > 0) {
+                const base = this._quotaRefreshIntervalMs || 60 * 1000;
+                this._quotaRefreshIntervalMs = Math.min(base * 2, 15 * 60 * 1000);
+                this._scheduleQuotaRefresh(this._quotaRefreshIntervalMs);
+            } else {
+                this._scheduleQuotaRefresh();
+            }
+        } finally {
+            this._isRefreshingQuotas = false;
         }
     }
 
@@ -1116,98 +1229,110 @@ class CloudCodeProxy {
      */
     async _refreshAvailableModels() {
         if (this._modelsRefreshStopped) return;
-        const last = this._lastModelsRequest;
-        if (!last || !last.url) {
-            this._scheduleModelsRefresh();
-            return;
-        }
+        if (this._isRefreshingModels) return;
+        this._isRefreshingModels = true;
         try {
-            // Strip hop-by-hop headers from the clone: they describe the ORIGINAL
-            // client->proxy hop, not our new request, and can corrupt the replay.
-            const HOP_BY_HOP = ['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'upgrade', 'te', 'trailer'];
-            const replayHeaders = { ...last.headers };
-            for (const h of HOP_BY_HOP) delete replayHeaders[h];
-            const reqOptions = {
-                hostname: this.targetHost,
-                port: 443,
-                path: last.url,
-                method: 'POST',
-                headers: { ...replayHeaders, host: this.targetHost }
-            };
-            if (this.tunnelAgent) reqOptions.agent = this.tunnelAgent;
-            const bodyBuffer = last.body ? Buffer.from(last.body, 'utf8') : null;
-            if (bodyBuffer) reqOptions.headers['content-length'] = bodyBuffer.length;
+            const last = this._lastModelsRequest;
+            if (!last || !last.url) {
+                this._scheduleModelsRefresh();
+                return;
+            }
+            try {
+                // Strip hop-by-hop headers from the clone: they describe the ORIGINAL
+                // client->proxy hop, not our new request, and can corrupt the replay.
+                const HOP_BY_HOP = ['transfer-encoding', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'proxy-connection', 'upgrade', 'te', 'trailer'];
+                const replayHeaders = { ...last.headers };
+                for (const h of HOP_BY_HOP) delete replayHeaders[h];
+                const reqOptions = {
+                    hostname: this.targetHost,
+                    port: 443,
+                    path: last.url,
+                    method: 'POST',
+                    headers: { ...replayHeaders, host: this.targetHost }
+                };
+                if (this.tunnelAgent) reqOptions.agent = this.tunnelAgent;
+                const bodyBuffer = last.body ? Buffer.from(last.body, 'utf8') : null;
+                if (bodyBuffer) reqOptions.headers['content-length'] = bodyBuffer.length;
 
-            await new Promise((resolve) => {
-                const proxyReq = https.request(reqOptions, (proxyRes) => {
-                    const chunks = [];
-                    proxyRes.on('data', (c) => chunks.push(c));
-                    proxyRes.on('end', () => {
-                        if (proxyRes.statusCode === 401 && !this._modelsRefreshAuthRetried) {
-                            this._modelsRefreshAuthRetried = true;
-                            resolve({ retryAuth: true });
+                await new Promise((resolve) => {
+                    const proxyReq = https.request(reqOptions, (proxyRes) => {
+                        const chunks = [];
+                        proxyRes.on('data', (c) => chunks.push(c));
+                        proxyRes.on('end', () => {
+                            if (proxyRes.statusCode === 401 && !this._modelsRefreshAuthRetried) {
+                                this._modelsRefreshAuthRetried = true;
+                                resolve({ retryAuth: true });
+                                return;
+                            }
+                            this._modelsRefreshAuthRetried = false;
+                            if (proxyRes.statusCode === 200) {
+                                const buffer = Buffer.concat(chunks);
+                                const isGzip = proxyRes.headers['content-encoding'] === 'gzip' ||
+                                               (buffer.length > 2 && buffer[0] === 0x1f && buffer[1] === 0x8b);
+                                // Save the PRISTINE (pre-BYOK) snapshot to the disk
+                                // cache first — same contract as _handleModelsRequest.
+                                try {
+                                    const decompressed = isGzip ? zlib.gunzipSync(buffer) : buffer;
+                                    const pristine = JSON.parse(decompressed.toString('utf8'));
+                                    const hasNative = this.modelsCacheRepo &&
+                                        (typeof this.modelsCacheRepo.hasNativeModels === 'function'
+                                            ? this.modelsCacheRepo.hasNativeModels(pristine)
+                                            : pristine.models && Object.keys(pristine.models).some(k => !k.startsWith('byok-')));
+                                    if (hasNative) {
+                                        this.modelsCacheRepo.save(pristine, this._getActiveEmail());
+                                    }
+                                } catch (_) { /* parse failure: latestQuotas stays as-is */ }
+                                this._handleModelsResponse(buffer, isGzip);
+                                this._modelsRefreshFailures = 0;
+                                this._modelsRefreshIntervalMs = null; // reset backoff
+                            } else if (proxyRes.statusCode === 429 || proxyRes.statusCode === 403) {
+                                this._modelsRefreshFailures = (this._modelsRefreshFailures || 0) + 1;
+                            }
+                            resolve(null);
+                        });
+                        proxyRes.on('error', () => resolve(null));
+                    });
+                    proxyReq.setTimeout(7000, () => {
+                        const err = new Error('ETIMEDOUT');
+                        err.code = 'ETIMEDOUT';
+                        proxyReq.destroy(err);
+                    });
+                    proxyReq.on('error', () => resolve(null));
+                    if (bodyBuffer) proxyReq.write(bodyBuffer);
+                    proxyReq.end();
+                });
+
+                // 401 self-healing: refresh token once, then retry immediately.
+                // The latch is NOT reset before the recursive retry — a persistently
+                // invalid token must not create an infinite refresh->401->refresh
+                // loop. It is reset only after a non-401 response (any status).
+                if (this._modelsRefreshAuthRetried) {
+                    try {
+                        const refreshRes = await this.authRefresher.refresh();
+                        if (refreshRes && refreshRes.accessToken && last.headers) {
+                            const authKey = Object.keys(last.headers).find(k => k.toLowerCase() === 'authorization') || 'authorization';
+                            last.headers[authKey] = `Bearer ${refreshRes.accessToken}`;
+                            this._isRefreshingModels = false;
+                            this._refreshAvailableModels();
                             return;
                         }
-                        this._modelsRefreshAuthRetried = false;
-                        if (proxyRes.statusCode === 200) {
-                            const buffer = Buffer.concat(chunks);
-                            const isGzip = proxyRes.headers['content-encoding'] === 'gzip' ||
-                                           (buffer.length > 2 && buffer[0] === 0x1f && buffer[1] === 0x8b);
-                            // Save the PRISTINE (pre-BYOK) snapshot to the disk
-                            // cache first — same contract as _handleModelsRequest.
-                            try {
-                                const decompressed = isGzip ? zlib.gunzipSync(buffer) : buffer;
-                                const pristine = JSON.parse(decompressed.toString('utf8'));
-                                const hasNative = this.modelsCacheRepo &&
-                                    (typeof this.modelsCacheRepo.hasNativeModels === 'function'
-                                        ? this.modelsCacheRepo.hasNativeModels(pristine)
-                                        : pristine.models && Object.keys(pristine.models).some(k => !k.startsWith('byok-')));
-                                if (hasNative) {
-                                    this.modelsCacheRepo.save(pristine, this._getActiveEmail());
-                                }
-                            } catch (_) { /* parse failure: latestQuotas stays as-is */ }
-                            this._handleModelsResponse(buffer, isGzip);
-                            this._modelsRefreshFailures = 0;
-                            this._modelsRefreshIntervalMs = null; // reset backoff
-                        } else if (proxyRes.statusCode === 429 || proxyRes.statusCode === 403) {
-                            this._modelsRefreshFailures = (this._modelsRefreshFailures || 0) + 1;
-                        }
-                        resolve(null);
-                    });
-                    proxyRes.on('error', () => resolve(null));
-                });
-                proxyReq.on('error', () => resolve(null));
-                if (bodyBuffer) proxyReq.write(bodyBuffer);
-                proxyReq.end();
-            });
-
-            // 401 self-healing: refresh token once, then retry immediately.
-            // The latch is NOT reset before the recursive retry — a persistently
-            // invalid token must not create an infinite refresh->401->refresh
-            // loop. It is reset only after a non-401 response (any status).
-            if (this._modelsRefreshAuthRetried) {
-                try {
-                    const refreshRes = await this.authRefresher.refresh();
-                    if (refreshRes && refreshRes.accessToken && last.headers) {
-                        const authKey = Object.keys(last.headers).find(k => k.toLowerCase() === 'authorization') || 'authorization';
-                        last.headers[authKey] = `Bearer ${refreshRes.accessToken}`;
-                        this._refreshAvailableModels();
-                        return;
-                    }
-                } catch (_) {}
+                    } catch (_) {}
+                }
+            } catch (err) {
+                console.warn('[CloudCode Proxy] Models refetch failed:', err.message);
+                this._modelsRefreshFailures = (this._modelsRefreshFailures || 0) + 1;
             }
-        } catch (err) {
-            console.warn('[CloudCode Proxy] Models refetch failed:', err.message);
-            this._modelsRefreshFailures = (this._modelsRefreshFailures || 0) + 1;
-        }
 
-        // Backoff on repeated failures: double up to 15 min
-        if (this._modelsRefreshFailures > 0) {
-            const base = this._modelsRefreshIntervalMs || 60 * 1000;
-            this._modelsRefreshIntervalMs = Math.min(base * 2, 15 * 60 * 1000);
-            this._scheduleModelsRefresh(this._modelsRefreshIntervalMs);
-        } else {
-            this._scheduleModelsRefresh();
+            // Backoff on repeated failures: double up to 15 min
+            if (this._modelsRefreshFailures > 0) {
+                const base = this._modelsRefreshIntervalMs || 60 * 1000;
+                this._modelsRefreshIntervalMs = Math.min(base * 2, 15 * 60 * 1000);
+                this._scheduleModelsRefresh(this._modelsRefreshIntervalMs);
+            } else {
+                this._scheduleModelsRefresh();
+            }
+        } finally {
+            this._isRefreshingModels = false;
         }
     }
 
@@ -1256,6 +1381,33 @@ class CloudCodeProxy {
             ...this.latestQuotas,
             quota5h: this.latestQuota5h
         };
+    }
+
+    notifyNetworkOnline() {
+        if (this._onlineDebounceTimer) {
+            clearTimeout(this._onlineDebounceTimer);
+        }
+        this._onlineDebounceTimer = setTimeout(() => {
+            this._onlineDebounceTimer = null;
+            console.log('[CloudCode Proxy] Network online event received, resetting backoff and refetching metadata');
+            this._modelsRefreshIntervalMs = null;
+            this._modelsRefreshFailures = 0;
+            this._quotaRefreshIntervalMs = null;
+            this._quotaRefreshFailures = 0;
+            if (this._modelsRefreshTimer) {
+                clearTimeout(this._modelsRefreshTimer);
+                this._modelsRefreshTimer = null;
+            }
+            if (this._quotaRefreshTimer) {
+                clearTimeout(this._quotaRefreshTimer);
+                this._quotaRefreshTimer = null;
+            }
+            this._refreshAvailableModels();
+            this._refreshQuota5h();
+        }, 1500);
+        if (typeof this._onlineDebounceTimer.unref === 'function') {
+            this._onlineDebounceTimer.unref();
+        }
     }
 }
 

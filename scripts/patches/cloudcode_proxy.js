@@ -15,6 +15,7 @@ module.exports = {
     updateActiveProxy: proxyModule.updateActiveProxy,
     getLatestProxyUsage: proxyModule.getLatestProxyUsage,
     getLatestProxyQuotas: proxyModule.getLatestProxyQuotas,
+    notifyNetworkOnline: proxyModule.notifyNetworkOnline,
     loadProxyConfig: proxyModule.loadProxyConfig,
     saveProxyConfig: proxyModule.saveProxyConfig,
     testProxyConnection: proxyModule.testProxyConnection,

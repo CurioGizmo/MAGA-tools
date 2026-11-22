@@ -198,13 +198,13 @@ function checkLsPatchStatus(binaryPath) {
 function checkCanaryState(resourcesDir) {
     let verdict;
     try {
-        verdict = getCanaryVerdict();
+        verdict = getCanaryVerdict(resourcesDir);
     } catch (e) {
         return makeCheck('canary', 'Canary совместимость', 'warn', `Ошибка чтения состояния: ${e.message}`);
     }
-    if (verdict.level === 'full') {
+    if (verdict.level === 'full' || verdict.level === 'partial') {
         return makeCheck('canary', 'Canary совместимость', 'ok',
-            `full${verdict.reason ? ` (${verdict.reason})` : ''}`);
+            `${verdict.level}${verdict.reason ? ` (${verdict.reason})` : ''}`);
     }
     if (verdict.level === 'risky') {
         return makeCheck('canary', 'Canary совместимость', 'fail',
