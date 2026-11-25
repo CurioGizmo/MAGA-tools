@@ -187,7 +187,9 @@ function getBrainDirs() {
 }
 
 function getTranscriptPath(convId) {
-    if (!convId) return null;
+    if (!convId || typeof convId !== 'string') return null;
+    // Reject path traversal attempts: convId must be a clean alphanumeric identifier
+    if (!/^[a-zA-Z0-9_-]+$/.test(convId)) return null;
     for (const brainDir of getBrainDirs()) {
         const pFull = path.join(brainDir, convId, '.system_generated', 'logs', 'transcript_full.jsonl');
         if (fs.existsSync(pFull)) return pFull;

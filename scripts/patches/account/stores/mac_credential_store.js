@@ -27,9 +27,14 @@ class MacCredentialStore extends CredentialStore {
     write(secretString, userName = 'antigravity') {
         if (!secretString) return false;
         try {
-            execFileSync('/usr/bin/security', [
-                'add-generic-password', '-U', '-s', this.service, '-a', this.account, '-w', secretString
-            ], { timeout: 5000 });
+            // Supply command via stdin (-i) to prevent secret leakage in ps / process table
+            const escapedSecret = secretString.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const cmd = `add-generic-password -U -s "${this.service}" -a "${this.account}" -w "${escapedSecret}"\n`;
+            execFileSync('/usr/bin/security', ['-i'], {
+                input: cmd,
+                timeout: 5000,
+                stdio: ['pipe', 'pipe', 'ignore']
+            });
             return true;
         } catch (e) {
             console.error('[MacCredentialStore] write error:', e.message);

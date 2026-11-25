@@ -54,18 +54,24 @@ function registerModelIpcHandlers(ipcMain, ctx) {
         try {
             const { endpoint, apiKey, provider, id: modelId } = params || {};
             let effectiveKey = apiKey;
-            if (effectiveKey && (effectiveKey.includes('...') || effectiveKey === '********')) {
-                const current = repo.load();
-                const existing = (current.models || []).find(m => (modelId && m.id === modelId) || m.endpoint === endpoint || m.provider === provider);
-                if (existing) effectiveKey = existing.apiKey;
+            const current = repo.load();
+            const existing = (current.models || []).find(m => modelId && m.id === modelId);
+            const isMasked = effectiveKey === '********' || (existing && (effectiveKey === repo.maskKey(existing.apiKey) || (effectiveKey.includes('...') && effectiveKey.length <= 16)));
+            if (existing && isMasked && (!endpoint || existing.endpoint === endpoint)) {
+                effectiveKey = existing.apiKey;
             }
 
             tunnelAgent = getActiveTunnelAgent();
             const models = [];
 
             if (provider === 'gemini' || (endpoint && endpoint.includes('googleapis.com'))) {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${effectiveKey || ''}`;
-                const res = await manager._httpGet(url, {}, tunnelAgent);
+                const ep = (endpoint || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+                const url = `${ep}/v1beta/models`;
+                const headers = {};
+                if (effectiveKey) {
+                    headers['x-goog-api-key'] = effectiveKey;
+                }
+                const res = await manager._httpGet(url, headers, tunnelAgent);
                 if (res.statusCode >= 200 && res.statusCode < 300) {
                     const data = JSON.parse(res.body || '{}');
                     for (const m of (data.models || [])) {
@@ -161,7 +167,8 @@ function registerModelIpcHandlers(ipcMain, ctx) {
             return { success: true, models };
         } catch (e) {
             console.error('[BYOK IPC] fetch-provider-models error:', e);
-            return { success: false, error: e.message };
+            const redactor = manager && manager.redactor ? manager.redactor : { redact: (s) => (s ? String(s).replace(/key=[^&\s]+/gi, 'key=***') : '') };
+            return { success: false, error: redactor.redact(e.message) };
         } finally {
             if (tunnelAgent && typeof tunnelAgent.destroy === 'function') {
                 try { tunnelAgent.destroy(); } catch (_) {}

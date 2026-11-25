@@ -311,7 +311,33 @@ console.log('\n7. Testing Config-Driven Reasoning Effort & Translators...');
         tCustom.streamGenerate({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }, { writeHead() {}, write() {}, end() {}, on() {}, once() {} });
         assert.strictEqual(capturedBody.max_completion_tokens, 8192, 'Custom model with reasoningLevels must use max_completion_tokens');
         assert.strictEqual(capturedBody.max_tokens, undefined);
-        console.log('  [✓] OpenAI max_completion_tokens vs max_tokens correctly selected based on reasoning capability');
+        // 7f. GeminiTranslator headers and query string security check
+        const gemSec = new GeminiTranslator({
+            modelName: 'gemini-2.5-flash',
+            apiKey: 'SECRET_GEMINI_KEY_123',
+            endpoint: 'http://127.0.0.1:9999'
+        });
+        let capturedGeminiOptions = null;
+        const origHttpReqGem = require('http').request;
+        require('http').request = function(options, cb) {
+            capturedGeminiOptions = options;
+            return {
+                on() {},
+                write() {},
+                end() {},
+                destroy() {}
+            };
+        };
+        try {
+            gemSec.streamGenerate({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }, { writeHead() {}, write() {}, end() {}, on() {}, once() {} });
+            assert.ok(capturedGeminiOptions, 'Gemini request must be triggered');
+            assert.strictEqual(capturedGeminiOptions.headers['x-goog-api-key'], 'SECRET_GEMINI_KEY_123', 'API key must be passed via x-goog-api-key header');
+            assert.ok(!capturedGeminiOptions.path.includes('SECRET_GEMINI_KEY_123'), 'API key must NOT appear in path/query string');
+            assert.ok(!capturedGeminiOptions.path.includes('key='), 'Path must not contain key= param');
+            console.log('  [✓] GeminiTranslator x-goog-api-key header and query key omission verified');
+        } finally {
+            require('http').request = origHttpReqGem;
+        }
     } finally {
         require('http').request = origHttpRequest;
     }

@@ -63,18 +63,21 @@ const RESERVED_SLOTS = [
     'MODEL_PLACEHOLDER_M452'
 ];
 
+let _effortFormatter;
+try {
+    _effortFormatter = require('../ui/effort_formatter');
+} catch (_) {
+    _effortFormatter = require('../../ui/effort_formatter');
+}
+const { formatEffortLevel, buildByokGroupedModels, isUnsupportedEffortLevel } = _effortFormatter;
+
 const VALID_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /**
- * SSOT display names for reasoning levels. Must mirror the native frontend
- * map (xhigh -> "Extra"); defined locally because this module runs in the
- * Electron main process where the UI bundle's formatter is not available.
+ * SSOT display names for reasoning levels (delegates to effort_formatter.js).
  */
-const LEVEL_DISPLAY = { none: 'None', off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
-
 function formatEffortLevelName(lvl) {
-    const key = String(lvl || '').toLowerCase();
-    return LEVEL_DISPLAY[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+    return formatEffortLevel(lvl);
 }
 
 function _hasModelId(validModels, id) {
@@ -161,6 +164,7 @@ const { PRESET_TEMPLATES } = require('./presets');
 
 class ByokConfigRepository {
     constructor(configPath = null) {
+        this._customPath = Boolean(configPath);
         this.configPath = configPath || this.getDefaultConfigPath();
     }
 
@@ -187,24 +191,66 @@ class ByokConfigRepository {
     load() {
         try {
             if (fs.existsSync(this.configPath)) {
-                const raw = fs.readFileSync(this.configPath, 'utf8');
-                const data = JSON.parse(raw);
-                if (data && typeof data === 'object') {
-                    return this._normalizeConfig({ ...DEFAULT_CONFIG, ...data });
+                const stat = fs.statSync(this.configPath);
+                if (stat.size > 0) {
+                    const raw = fs.readFileSync(this.configPath, 'utf8');
+                    const data = JSON.parse(raw);
+                    if (data && typeof data === 'object') {
+                        return this._normalizeConfig({ ...DEFAULT_CONFIG, ...data });
+                    }
                 }
             }
         } catch (e) {
             console.warn('[ByokConfigRepository] Failed to load config:', e.message);
         }
+
+        // File is missing or corrupted: try Fallback 1 (.bak)
+        try {
+            const bakPath = this.configPath + '.bak';
+            if (fs.existsSync(bakPath)) {
+                const rawBak = fs.readFileSync(bakPath, 'utf8');
+                const dataBak = JSON.parse(rawBak);
+                if (dataBak && typeof dataBak === 'object' && Array.isArray(dataBak.models) && dataBak.models.length > 0) {
+                    console.log('[ByokConfigRepository] Restored BYOK config from backup:', bakPath);
+                    const restored = this._normalizeConfig({ ...DEFAULT_CONFIG, ...dataBak });
+                    this.save(restored);
+                    return restored;
+                }
+            }
+        } catch (_) {}
+
+        // Fallback 2: check candidate profile directories across homes (when using default path)
+        if (!process.env.AGY_BYOK_CONFIG_PATH && !this._customPath) {
+            try {
+                const { getAllUserHomes } = require('../../utils/paths');
+                const homes = getAllUserHomes();
+                for (const home of homes) {
+                    const candPath = path.join(home, '.gemini', 'antigravity', 'byok_config.json');
+                    if (candPath !== this.configPath && fs.existsSync(candPath)) {
+                        try {
+                            const cRaw = fs.readFileSync(candPath, 'utf8');
+                            const cData = JSON.parse(cRaw);
+                            if (cData && typeof cData === 'object' && Array.isArray(cData.models) && cData.models.length > 0) {
+                                console.log('[ByokConfigRepository] Auto-discovered BYOK config from profile:', candPath);
+                                const adopted = this._normalizeConfig({ ...DEFAULT_CONFIG, ...cData });
+                                this.save(adopted);
+                                return adopted;
+                            }
+                        } catch (_) {}
+                    }
+                }
+            } catch (_) {}
+        }
+
         // Deep copy: shallow spread would share the subagentTiers/models references
         // with the module-level DEFAULT_CONFIG, letting consumer mutations pollute defaults.
         return {
             ...DEFAULT_CONFIG,
             models: [],
             subagentTiers: {
-                pro: { ...DEFAULT_CONFIG.subagentTiers.pro, models: [], fallbackModels: [] },
-                flash: { ...DEFAULT_CONFIG.subagentTiers.flash, models: [], fallbackModels: [] },
-                flashLite: { ...DEFAULT_CONFIG.subagentTiers.flashLite, models: [], fallbackModels: [] }
+                pro: { ...DEFAULT_SUBAGENT_TIERS.pro, models: [], fallbackModels: [] },
+                flash: { ...DEFAULT_SUBAGENT_TIERS.flash, models: [], fallbackModels: [] },
+                flashLite: { ...DEFAULT_SUBAGENT_TIERS.flashLite, models: [], fallbackModels: [] }
             }
         };
     }
@@ -216,6 +262,20 @@ class ByokConfigRepository {
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
             }
+
+            // Safety Backup: if current file on disk has valid models,
+            // always preserve it into .bak so valid models are never destroyed.
+            try {
+                if (fs.existsSync(this.configPath)) {
+                    const existingRaw = fs.readFileSync(this.configPath, 'utf8');
+                    const existingData = JSON.parse(existingRaw);
+                    if (existingData && Array.isArray(existingData.models) && existingData.models.length > 0) {
+                        const bakPath = this.configPath + '.bak';
+                        this._atomicWrite(bakPath, existingRaw);
+                        this._enforcePermissions(bakPath);
+                    }
+                }
+            } catch (_) {}
 
             const jsonStr = JSON.stringify(normalized, null, 2);
             this._atomicWrite(this.configPath, jsonStr);
@@ -243,9 +303,13 @@ class ByokConfigRepository {
             } catch (err) {
                 lastError = err;
                 if (err.code === 'EBUSY' || err.code === 'EPERM') {
-                    const delay = 25 * Math.pow(1.5, attempt);
-                    const stop = Date.now() + delay;
-                    while (Date.now() < stop) { /* synchronous spin/wait */ }
+                    const delay = Math.round(25 * Math.pow(1.5, attempt));
+                    try {
+                        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
+                    } catch (_) {
+                        const stop = Date.now() + delay;
+                        while (Date.now() < stop) { /* spin fallback */ }
+                    }
                 } else {
                     break;
                 }
@@ -507,11 +571,12 @@ class ByokConfigRepository {
                     // the native parser regexp E3b matches /(low|medium|high|xhigh|max)/
                     // against the label text, and the native submenu renders the display
                     // name via P4 (xhigh -> "Extra") itself.
-                    const capLvl = lvl === 'xhigh' ? 'xhigh' : formatEffortLevelName(lvl);
+                    const capLvl = lvl === 'xhigh' ? 'xhigh' : (lvl.charAt(0).toUpperCase() + lvl.slice(1));
                     const varLabel = uniqueLabel(`${m.displayName} (${capLvl})`, slot);
                     result.push({
                         id: `${m.id}-${lvl}`,
                         baseModelId: m.id,
+                        baseDisplayName: m.displayName,
                         label: varLabel,
                         slot: slot,
                         slotInt: Number(slot.slice(-3)) + 1000,
@@ -533,6 +598,7 @@ class ByokConfigRepository {
                 result.push({
                     id: m.id,
                     baseModelId: m.id,
+                    baseDisplayName: m.displayName,
                     label: varLabel,
                     slot: slot,
                     slotInt: Number(slot.slice(-3)) + 1000,
@@ -578,7 +644,13 @@ class ByokConfigRepository {
         if (!id) return null;
         const cleanId = String(id).replace(/^(?:publishers\/google\/models\/|models\/)/i, '').trim();
         const config = this.load();
-        return config.models.find(m => m.id === cleanId || m.slot === cleanId || m.modelName === cleanId) || null;
+        const direct = config.models.find(m => m.id === cleanId || m.slot === cleanId || m.modelName === cleanId);
+        if (direct) return direct;
+        const variant = this.getVariantBySlot(cleanId);
+        if (variant) {
+            return config.models.find(m => m.id === variant.baseModelId) || null;
+        }
+        return null;
     }
 
     getEffectiveCompactionThreshold(model) {
@@ -638,6 +710,9 @@ module.exports = {
     RESERVED_SLOTS,
     PRESET_TEMPLATES,
     VALID_LEVELS,
+    formatEffortLevelName,
+    buildByokGroupedModels,
+    isUnsupportedEffortLevel,
     parseTierModelKey,
     getEffectiveCompactionThreshold,
     getInjectedCompactionThreshold

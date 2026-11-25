@@ -76,7 +76,7 @@ function registerProxyIpc(ipcMain, options = {}) {
     // 2. Proxy Configuration Handlers
     ipcMain.handle('agy:proxy:get-config', async () => {
         try {
-            return proxyRepo.load();
+            return proxyRepo.getMaskedConfig ? proxyRepo.getMaskedConfig() : proxyRepo.load();
         } catch (e) {
             console.error('[ProxyIPC] Failed to get config:', e);
             return null;
@@ -85,7 +85,16 @@ function registerProxyIpc(ipcMain, options = {}) {
 
     ipcMain.handle('agy:proxy:save-config', async (_event, newConfig) => {
         try {
-            const res = proxyRepo.save(newConfig);
+            const current = proxyRepo.load();
+            let effectivePassword = newConfig ? newConfig.password : '';
+            if (effectivePassword === '********' && current.password) {
+                effectivePassword = current.password;
+            }
+            const configToSave = {
+                ...newConfig,
+                password: effectivePassword
+            };
+            const res = proxyRepo.save(configToSave);
             if (res.success) {
                 onProxyConfigChanged(res.config);
 
@@ -116,8 +125,14 @@ function registerProxyIpc(ipcMain, options = {}) {
                             if (authInfo && authInfo.isProxy) {
                                 const cur = proxyRepo.load();
                                 if (cur && cur.enabled && cur.username) {
-                                    event.preventDefault();
-                                    callback(cur.username, cur.password);
+                                    const authHost = String(authInfo.host || '').toLowerCase();
+                                    const curHost = String(cur.host || '').toLowerCase();
+                                    const authPort = Number(authInfo.port) || 0;
+                                    const curPort = Number(cur.port) || 0;
+                                    if (authHost === curHost && (authPort === 0 || curPort === 0 || authPort === curPort)) {
+                                        event.preventDefault();
+                                        callback(cur.username, cur.password);
+                                    }
                                 }
                             }
                         });
@@ -125,6 +140,9 @@ function registerProxyIpc(ipcMain, options = {}) {
                 } catch (err) {
                     console.warn('[ProxyIPC] Could not configure Electron session proxy:', err.message);
                 }
+
+                // Return masked config to renderer
+                res.config = proxyRepo.getMaskedConfig ? proxyRepo.getMaskedConfig(res.config) : res.config;
             }
             return res;
         } catch (e) {
@@ -135,7 +153,13 @@ function registerProxyIpc(ipcMain, options = {}) {
 
     ipcMain.handle('agy:proxy:test-connection', async (_event, candidateConfig) => {
         try {
-            const target = candidateConfig || proxyRepo.load();
+            const current = proxyRepo.load();
+            let target = candidateConfig || current;
+            const isSameHost = !candidateConfig || !candidateConfig.host ||
+                String(candidateConfig.host).trim().toLowerCase() === String(current.host || '').trim().toLowerCase();
+            if (target && target.password === '********' && current.password && isSameHost) {
+                target = { ...target, password: current.password };
+            }
             return await testProxyConnection(target, 8000);
         } catch (e) {
             console.error('[ProxyIPC] Failed to test connection:', e);

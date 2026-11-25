@@ -93,17 +93,18 @@ class GeminiTranslator {
         const apiKey = this.modelConfig.apiKey || '';
 
         const endpoint = (this.modelConfig.endpoint || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
-        const targetUrl = `${endpoint}/v1beta/models/${encodeURIComponent(modelName)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`;
+        const targetUrl = `${endpoint}/v1beta/models/${encodeURIComponent(modelName)}:streamGenerateContent?alt=sse`;
 
         let parsedUrl;
         try {
             parsedUrl = new URL(targetUrl);
         } catch (e) {
+            const safeMsg = `Invalid Google AI Studio endpoint URL: ${endpoint}`;
             if (failoverMode) {
                 streamConverter.detach();
-                return { ok: false, error: { statusCode: 400, message: `Invalid Google AI Studio endpoint URL: ${targetUrl}` } };
+                return { ok: false, error: { statusCode: 400, message: safeMsg } };
             }
-            streamConverter.emitError(400, `Invalid Google AI Studio endpoint URL: ${targetUrl}`);
+            streamConverter.emitError(400, safeMsg);
             return { ok: false };
         }
 
@@ -123,6 +124,10 @@ class GeminiTranslator {
                 'Content-Type': 'application/json',
                 'Accept': 'text/event-stream'
             };
+
+            if (apiKey) {
+                headers['x-goog-api-key'] = apiKey;
+            }
 
             if (this.modelConfig.customHeaders && typeof this.modelConfig.customHeaders === 'object') {
                 Object.assign(headers, this.modelConfig.customHeaders);

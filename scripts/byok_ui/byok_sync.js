@@ -4,6 +4,14 @@
  * and natively integrates all reasoning levels into the chat model selector dropdown.
  */
 
+var _effortFormatter = (typeof require !== 'undefined') ? require('../ui/effort_formatter.js') : null;
+var isUnsupportedEffortLevel = (typeof globalThis !== 'undefined' && globalThis.__agyIsUnsupportedEffortLevel)
+    ? globalThis.__agyIsUnsupportedEffortLevel
+    : (_effortFormatter ? _effortFormatter.isUnsupportedEffortLevel : (label => /\((none|off)(?:\s+thinking)?\)$/i.test(label || '')));
+var buildByokGroupedModels = (typeof globalThis !== 'undefined' && globalThis.__agyBuildByokGroupedModels)
+    ? globalThis.__agyBuildByokGroupedModels
+    : (_effortFormatter ? _effortFormatter.buildByokGroupedModels : null);
+
 class ByokModelSync {
     /**
      * Resolves the userStatusProvider from the React Fiber tree
@@ -72,6 +80,19 @@ class ByokModelSync {
     }
 
     /**
+     * Resolves human-readable effort label (e.g. low -> Low, xhigh -> Extra).
+     */
+    static _formatEffort(lvl) {
+        if (!lvl) return '';
+        if (typeof formatEffortLevel === 'function') return formatEffortLevel(lvl);
+        if (typeof globalThis !== 'undefined' && typeof globalThis.__agyFormatEffortLevel === 'function') {
+            return globalThis.__agyFormatEffortLevel(lvl);
+        }
+        const l = String(lvl).toLowerCase();
+        return l === 'xhigh' ? 'Extra' : (l.charAt(0).toUpperCase() + l.slice(1));
+    }
+
+    /**
      * Patches a userStatus state object with active BYOK model configurations
      */
     static _patchStateWithByok(state, variants = [], isMasterEnabled = true) {
@@ -82,6 +103,7 @@ class ByokModelSync {
         const active = isMasterEnabled ? (variants || []).filter(v => v && v.id && v.label && slotRegex.test(v.slot) && isValidSlotInt(v.slotInt)) : [];
         const previousIds = this._knownIds || new Set();
         const previousLabels = this._knownLabels || new Set();
+        const previousGroupKeys = this._knownGroupKeys || new Set();
         const currentIds = new Set(active.map(v => v.id));
         const ownedIds = new Set([...previousIds, ...currentIds]);
         const existingConfigs = data.clientModelConfigs || [];
@@ -145,7 +167,6 @@ class ByokModelSync {
         // "None" stays selectable via our submenu injection, routing via models{}.
         // A model with ONLY none/off levels still publishes its representative
         // row (or it would vanish from the selector entirely).
-        const isUnsupportedLevel = label => /\((none|off)(?:\s+thinking)?\)$/i.test(label);
         const variantsByModel = new Map();
         for (const v of available) {
             if (!variantsByModel.has(v.baseModelId)) variantsByModel.set(v.baseModelId, []);
@@ -153,8 +174,8 @@ class ByokModelSync {
         }
         const isFlatHidden = v => {
             const siblings = variantsByModel.get(v.baseModelId) || [v];
-            const hasStandard = siblings.some(s => !isUnsupportedLevel(s.label));
-            return isUnsupportedLevel(v.label) && hasStandard;
+            const hasStandard = siblings.some(s => !isUnsupportedEffortLevel(s.label));
+            return isUnsupportedEffortLevel(v.label) && hasStandard;
         };
         const publishable = available.filter(v => !isFlatHidden(v));
 
@@ -212,7 +233,7 @@ class ByokModelSync {
         // A model with ONLY none/off levels keeps its single representative row.
         const sortVisibleVariants = [];
         for (const [, modelVariants] of variantsByModel) {
-            const standard = modelVariants.filter(v => !isUnsupportedLevel(v.label));
+            const standard = modelVariants.filter(v => !isUnsupportedEffortLevel(v.label));
             if (standard.length > 0) {
                 sortVisibleVariants.push(...standard);
             } else if (modelVariants.length > 0) {
@@ -245,14 +266,59 @@ class ByokModelSync {
                 }]
             }];
         }
+
+        // Build groupedModels for models with >= 2 reasoning levels so Antigravity 2.34+
+        // effort-grouping (lSb/dW in frontend main.js) natively groups them with chevron
+        // submenu instead of flat rows. Shared SSOT buildByokGroupedModels.
+        const buildGroupsFn = (typeof buildByokGroupedModels === 'function')
+            ? buildByokGroupedModels
+            : ((typeof globalThis !== 'undefined' && globalThis.__agyBuildByokGroupedModels) || null);
+        const byokGroupedModels = (isMasterEnabled && buildGroupsFn)
+            ? buildGroupsFn(active, ByokModelSync._formatEffort)
+            : {};
+        const mergedGroupedModels = this._mergeGroupedModels(data && data.groupedModels, byokGroupedModels, previousGroupKeys);
+
         this._knownIds = ownedIds;
         this._knownLabels = ownedLabels;
         state.cascadeModelConfigData = {
             ...data,
             clientModelConfigs: [...nonByokConfigs, ...byokConfigs],
-            clientModelSorts: newSorts
+            clientModelSorts: newSorts,
+            groupedModels: mergedGroupedModels
         };
         return state;
+    }
+
+    /**
+     * Merges BYOK groupedModels with clean native groupedModels while preserving cached native groups.
+     */
+    static _mergeGroupedModels(existingGrouped, byokGroupedModels, previousGroupKeys = new Set()) {
+        const currentGroupKeys = new Set(Object.keys(byokGroupedModels));
+        const ownedGroupKeys = new Set([...previousGroupKeys, ...currentGroupKeys]);
+        this._knownGroupKeys = ownedGroupKeys;
+
+        const isByokGroup = (key, val) =>
+            ownedGroupKeys.has(key) ||
+            String(key).startsWith('byok-') ||
+            (val && val.displayName && String(val.displayName).includes('(BYOK)'));
+
+        const cleanGrouped = {};
+        const existing = (existingGrouped && typeof existingGrouped === 'object') ? existingGrouped : {};
+        for (const [k, v] of Object.entries(existing)) {
+            if (!isByokGroup(k, v)) {
+                cleanGrouped[k] = v;
+            }
+        }
+        if (Object.keys(cleanGrouped).length > 0) {
+            this._cachedNativeGrouped = cleanGrouped;
+        } else if (this._cachedNativeGrouped) {
+            for (const [k, v] of Object.entries(this._cachedNativeGrouped)) {
+                if (!isByokGroup(k, v)) {
+                    cleanGrouped[k] = v;
+                }
+            }
+        }
+        return { ...cleanGrouped, ...byokGroupedModels };
     }
 
     /**
@@ -261,8 +327,9 @@ class ByokModelSync {
     static _updateModelSelectorDivider(rootMenu = null) {
         if (typeof document === 'undefined') return;
         // Radix-era selector first, then Base UI (2.2x migration: menus carry
-        // data-rootownerid and no data-nested marker).
+        // data-rootownerid and no data-nested marker; 2.34 carries data-testid="model-selector-panel").
         const menu = rootMenu ||
+            document.querySelector('[data-testid="model-selector-panel"]') ||
             document.querySelector('[role="menu"]:not([data-nested]):not(:has([data-testid="model-selector-effort-option"]))') ||
             document.querySelector('[role="menu"][data-rootownerid]:not([data-nested]), [role="menu"][data-base-ui-focusable]:not([data-nested])');
         if (!menu) return;
@@ -362,8 +429,9 @@ class ByokModelSync {
                 // sawElementAdd to stay cheap during token streaming).
                 // Antigravity 2.2x migrated model selector from Radix to Base UI:
                 // menus now carry data-rootownerid / data-base-ui-focusable and
-                // no data-nested markers, so both signatures are probed here.
+                // no data-nested markers; 2.34+ carries data-testid="model-selector-panel".
                 if (sawElementAdd && (
+                    document.querySelector('[data-testid="model-selector-panel"]') ||
                     document.querySelector('[role="menu"]:not([data-nested])') ||
                     document.querySelector('[role="menu"][data-rootownerid], [role="menu"][data-base-ui-focusable]')
                 )) {
@@ -374,7 +442,11 @@ class ByokModelSync {
 
             ByokModelSync._updateModelSelectorDivider();
 
-            const sub = document.querySelector('[role="menu"][data-nested]') || document.querySelector('[role="menu"]:has([data-testid="model-selector-effort-option"])');
+            const effortOption = document.querySelector('[data-testid="model-selector-effort-option"]');
+            const sub = effortOption ? effortOption.closest('[role="menu"]') : (
+                document.querySelector('[role="menu"][data-nested]') ||
+                document.querySelector('[role="menu"]:has([data-testid="model-selector-effort-option"])')
+            );
             if (!sub) return;
 
             const parentId = sub.getAttribute('aria-labelledby');
@@ -390,7 +462,7 @@ class ByokModelSync {
             if (effortOptions.length === 0) return;
 
             const firstOpt = effortOptions[0];
-            const radioItem = firstOpt.closest('[role="menuitemradio"]');
+            const radioItem = firstOpt.closest('[role="menuitemradio"]') || firstOpt.closest('[role^="menuitem"]');
             if (!radioItem || !radioItem.parentElement) return;
             const container = radioItem.parentElement;
 
@@ -407,74 +479,75 @@ class ByokModelSync {
 
             const existingEfforts = new Set(Array.from(effortOptions).map(o => o.getAttribute('data-effort')?.toLowerCase()));
 
-            // The native submenu renders low|medium|high|xhigh|max itself (bundle C3b);
-            // inject ONLY the levels the native parser does not know: none/off.
-            const NATIVE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
-
-            for (const v of matchingVariants) {
-                const lvl = (v.thinkingLevel || '').toLowerCase();
-                if (!lvl || existingEfforts.has(lvl) || NATIVE_EFFORTS.has(lvl)) continue;
-                existingEfforts.add(lvl);
-
-                const newItem = radioItem.cloneNode(true);
-                newItem.id = `byok-effort-${v.id}`;
-                newItem.removeAttribute('data-highlighted');
-
-                const span = newItem.querySelector('[data-testid="model-selector-effort-option"]');
-                if (span) {
-                    span.setAttribute('data-effort', lvl);
-                    // Native frontend names xhigh "Extra" (bundle P4); we only reach here
-                    // for levels the native submenu does not render (none/off), so use
-                    // the SSOT formatter for consistency.
-                    span.textContent = (typeof formatEffortLevel === 'function') ? formatEffortLevel(lvl) : (lvl.charAt(0).toUpperCase() + lvl.slice(1));
-                }
-
-                const checkmark = newItem.querySelector('svg');
-                if (checkmark && checkmark.parentElement) checkmark.parentElement.remove();
-
-                // Current-level detection must mirror the native naming (P4: xhigh="Extra"),
-                // so "Extra" in the trigger marks our injected "none/off" item correctly
-                // only when the effort word actually matches the variant level.
-                const displayName = (typeof formatEffortLevel === 'function') ? formatEffortLevel(lvl) : lvl;
-                const triggerText = (document.querySelector('[data-testid="model-selector-trigger"]')?.textContent || '').trim();
-                const isCurrent = triggerText.includes(v.label)
-                    || (triggerText.toLowerCase().endsWith(displayName.toLowerCase()) && displayName.toLowerCase() === lvl);
-                if (isCurrent) {
-                    newItem.setAttribute('data-checked', '');
-                    newItem.setAttribute('aria-checked', 'true');
-                    newItem.removeAttribute('data-unchecked');
-                } else {
-                    newItem.setAttribute('data-unchecked', '');
-                    newItem.setAttribute('aria-checked', 'false');
-                    newItem.removeAttribute('data-checked');
-                }
-
-                newItem.addEventListener('click', (ev) => {
-                    ev.stopPropagation();
-                    const setSelectedModel = ByokModelSync.getSetSelectedModel();
-                    if (typeof setSelectedModel === 'function') {
-                        setSelectedModel({
-                            label: v.label,
-                            value: v.slotInt,
-                            modelOrAlias: {
-                                $typeName: 'exa.codeium_common_pb.ModelOrAlias',
-                                choice: { case: 'model', value: v.slotInt }
-                            },
-                            disabled: false,
-                            supportsThoughtCirculation: Boolean(v.supportsThinking),
-                            supportedMimeTypes: new Map(Object.entries(ByokModelSync._buildMime(v.supportsImages))),
-                            tagTitle: 'BYOK',
-                            tagDescription: 'External Model'
-                        });
-                    }
-                    document.body.click();
-                });
-
-                container.appendChild(newItem);
-            }
+            ByokModelSync._injectNonNativeEffortOptions(container, radioItem, matchingVariants, existingEfforts);
         });
 
         observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /**
+     * Injects non-native reasoning levels (none/off) into the Base UI effort submenu.
+     */
+    static _injectNonNativeEffortOptions(container, radioItem, matchingVariants, existingEfforts) {
+        // The native submenu renders low|medium|high|xhigh|max itself (bundle C3b);
+        // inject ONLY the levels the native parser does not know: none/off.
+        const NATIVE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+        for (const v of matchingVariants) {
+            const lvl = (v.thinkingLevel || '').toLowerCase();
+            if (!lvl || existingEfforts.has(lvl) || NATIVE_EFFORTS.has(lvl)) continue;
+            existingEfforts.add(lvl);
+
+            const newItem = radioItem.cloneNode(true);
+            newItem.id = `byok-effort-${v.id}`;
+            newItem.removeAttribute('data-highlighted');
+
+            const span = newItem.querySelector('[data-testid="model-selector-effort-option"]');
+            if (span) {
+                span.setAttribute('data-effort', lvl);
+                span.textContent = ByokModelSync._formatEffort(lvl);
+            }
+
+            const checkmark = newItem.querySelector('svg');
+            if (checkmark && checkmark.parentElement) checkmark.parentElement.remove();
+
+            const displayName = ByokModelSync._formatEffort(lvl);
+            const triggerText = (document.querySelector('[data-testid="model-selector-trigger"]')?.textContent || '').trim();
+            const isCurrent = triggerText.includes(v.label)
+                || (triggerText.toLowerCase().endsWith(displayName.toLowerCase()) && displayName.toLowerCase() === lvl);
+            if (isCurrent) {
+                newItem.setAttribute('data-checked', '');
+                newItem.setAttribute('aria-checked', 'true');
+                newItem.removeAttribute('data-unchecked');
+            } else {
+                newItem.setAttribute('data-unchecked', '');
+                newItem.setAttribute('aria-checked', 'false');
+                newItem.removeAttribute('data-checked');
+            }
+
+            newItem.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const setSelectedModel = ByokModelSync.getSetSelectedModel();
+                if (typeof setSelectedModel === 'function') {
+                    setSelectedModel({
+                        label: v.label,
+                        value: v.slotInt,
+                        modelOrAlias: {
+                            $typeName: 'exa.codeium_common_pb.ModelOrAlias',
+                            choice: { case: 'model', value: v.slotInt }
+                        },
+                        disabled: false,
+                        supportsThoughtCirculation: Boolean(v.supportsThinking),
+                        supportedMimeTypes: new Map(Object.entries(ByokModelSync._buildMime(v.supportsImages))),
+                        tagTitle: 'BYOK',
+                        tagDescription: 'External Model'
+                    });
+                }
+                document.body.click();
+            });
+
+            container.appendChild(newItem);
+        }
     }
 
     /**
@@ -524,9 +597,7 @@ class ByokModelSync {
 
                 const baseName = match[1].trim();
                 const level = match[2];
-                const capLevel = (typeof formatEffortLevel === 'function')
-                    ? formatEffortLevel(level)
-                    : (level.toLowerCase() === 'none' ? 'None' : (level.charAt(0).toUpperCase() + level.slice(1)));
+                const capLevel = ByokModelSync._formatEffort(level);
 
                 trigger.dataset.byokBase = baseName;
                 trigger.dataset.byokLevel = capLevel;
@@ -629,7 +700,9 @@ class ByokModelSync {
                     if (currentEmail && ByokModelSync._lastUserEmail && currentEmail !== ByokModelSync._lastUserEmail) {
                         ByokModelSync._knownIds = new Set();
                         ByokModelSync._knownLabels = new Set();
+                        ByokModelSync._knownGroupKeys = new Set();
                         ByokModelSync._cachedNativeConfigs = null;
+                        ByokModelSync._cachedNativeGrouped = null;
                         try {
                             if (typeof localStorage !== 'undefined') {
                                 localStorage.removeItem('agy_cached_native_configs');

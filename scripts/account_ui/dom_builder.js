@@ -72,8 +72,14 @@ class AccountDomBuilder {
 
         const avatar = document.createElement('div');
         avatar.className = 'agy-am-avatar';
-        if (acc.picture) avatar.innerHTML = `<img src="${acc.picture}">`;
-        else avatar.textContent = (acc.name || acc.email || 'U')[0].toUpperCase();
+        if (acc.picture && typeof acc.picture === 'string' && /^https?:\/\//i.test(acc.picture.trim())) {
+          const img = document.createElement('img');
+          img.src = acc.picture.trim();
+          img.alt = acc.name || acc.email || 'avatar';
+          avatar.appendChild(img);
+        } else {
+          avatar.textContent = (acc.name || acc.email || 'U')[0].toUpperCase();
+        }
 
         const detailsBox = document.createElement('div');
         detailsBox.className = 'agy-am-details';

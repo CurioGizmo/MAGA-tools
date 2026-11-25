@@ -150,11 +150,16 @@ function generateBridgeAndHudCode(i18nScript, hudScript, uiScript, retryScript, 
             onModelsUpdated: (cb) => {
                 try {
                     if (typeof electron_1 !== 'undefined' && electron_1.ipcRenderer) {
-                        electron_1.ipcRenderer.on('agy:proxy:models-updated', (_event, data) => {
+                        const handler = (_event, data) => {
                             try { cb(data); } catch (err) { console.warn('[agyBridge] onModelsUpdated error:', err); }
-                        });
+                        };
+                        electron_1.ipcRenderer.on('agy:proxy:models-updated', handler);
+                        return () => {
+                            try { electron_1.ipcRenderer.removeListener('agy:proxy:models-updated', handler); } catch (_) {}
+                        };
                     }
                 } catch (e) { console.warn('[agyBridge] onModelsUpdated setup error:', e); }
+                return () => {};
             }
         };
         if (typeof electron_1 !== 'undefined' && electron_1.contextBridge) {

@@ -124,6 +124,9 @@ function connectViaSocks5(proxy, targetHost, targetPort, callback) {
         function sendSocksConnect() {
             // Step 3: CONNECT request with Remote DNS (0x03 DOMAINNAME)
             const domainBuf = Buffer.from(targetHost, 'utf8');
+            if (domainBuf.length > 255) {
+                return safeCallback(new Error(`Target host exceeds SOCKS5 domain length limit (255 bytes): ${domainBuf.length}`));
+            }
             const portBuf = Buffer.alloc(2);
             portBuf.writeUInt16BE(targetPort, 0);
 
@@ -245,6 +248,13 @@ function connectViaHttpConnect(proxy, targetHost, targetPort, callback) {
     });
 
     rawSocket.once('connect', () => {
+        if (/[\r\n]/.test(targetHost) || /[\r\n]/.test(String(targetPort))) {
+            return safeCallback(new Error('Invalid characters in targetHost or targetPort (CRLF detected)'));
+        }
+        if (proxy.username && /[\r\n]/.test(proxy.username)) {
+            return safeCallback(new Error('Invalid characters in proxy username (CRLF detected)'));
+        }
+
         const headers = [
             `CONNECT ${targetHost}:${targetPort} HTTP/1.1`,
             `Host: ${targetHost}:${targetPort}`,

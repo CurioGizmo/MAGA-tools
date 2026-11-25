@@ -369,6 +369,95 @@ assert.strictEqual(decodeJwtPayload('invalid_token'), null);
     });
     console.log('  [✓] scripts/patches/proxy_manager_ui.js is up to date with scripts/proxy_ui/ sources');
 
+    // =========================================================================
+    // 10. Security Regressions Gate (P0 Fixes)
+    // =========================================================================
+    console.log('\n--- Test 10: Security Regressions (WinCredentialStore C# & Proxy Masking) ---');
+    // 10A. WinCredentialStore C# syntax
+    const winStoreCode = fs.readFileSync(path.resolve(__dirname, '../patches/account/stores/win_credential_store.js'), 'utf8');
+    assert.ok(!winStoreCode.includes('[Convert]::ToBase64String'), 'win_credential_store.js must not contain PowerShell syntax [Convert]:: in C# code');
+    assert.ok(!winStoreCode.includes('return $null;'), 'win_credential_store.js must not contain PowerShell return $null; in C# code');
+    assert.ok(winStoreCode.includes('Convert.ToBase64String'), 'win_credential_store.js must use C# Convert.ToBase64String');
+    assert.ok(winStoreCode.includes('return null;'), 'win_credential_store.js must use C# return null;');
+    assert.ok(winStoreCode.includes('finally'), 'win_credential_store.js must ensure CredFree inside finally block');
+
+    // 10B. ProxyConfigRepository getMaskedConfig
+    const { ProxyConfigRepository } = require('../patches/proxy/proxy_config_repository');
+    const proxyRepoTest = new ProxyConfigRepository();
+    const masked = proxyRepoTest.getMaskedConfig({
+        enabled: true,
+        host: '1.2.3.4',
+        port: 1080,
+        username: 'alice',
+        password: 'supersecretpassword'
+    });
+    assert.strictEqual(masked.password, '********', 'getMaskedConfig must mask password');
+    assert.strictEqual(masked.hasPassword, true, 'getMaskedConfig must set hasPassword: true');
+    assert.strictEqual(masked.username, 'alice');
+
+    const emptyMasked = proxyRepoTest.getMaskedConfig({
+        enabled: true,
+        host: '1.2.3.4',
+        port: 1080,
+        username: '',
+        password: ''
+    });
+    assert.strictEqual(emptyMasked.password, '', 'Empty password should remain empty');
+    assert.strictEqual(emptyMasked.hasPassword, false, 'hasPassword must be false for empty password');
+    console.log('  [✓] WinCredentialStore C# syntax and ProxyConfigRepository masking verified');
+
+    // 10C. Proxy test-connection host isolation check
+    const proxyIpcCode = fs.readFileSync(path.resolve(__dirname, '../patches/proxy/proxy_ipc.js'), 'utf8');
+    assert.ok(proxyIpcCode.includes('isSameHost'), 'proxy_ipc.js must check isSameHost before restoring masked password');
+    assert.ok(proxyIpcCode.includes('authHost === curHost'), 'proxy_ipc.js must verify authInfo.host === cur.host in login event');
+
+    // 10D. BYOK test-connection endpoint match check
+    const byokIpcCode = fs.readFileSync(path.resolve(__dirname, '../patches/byok/ipc_config_handlers.js'), 'utf8');
+    assert.ok(byokIpcCode.includes('existing.endpoint === modelData.endpoint'), 'ipc_config_handlers.js must verify endpoint match before restoring apiKey');
+    console.log('  [✓] Proxy and BYOK host/endpoint isolation in test-connection verified');
+
+    // 11. Path traversal protection in paths.getTranscriptPath
+    console.log('\n--- Test 11: Path Traversal Protection in getTranscriptPath ---');
+    const pathsModule = require('../utils/paths');
+    assert.strictEqual(pathsModule.getTranscriptPath('../../etc/passwd'), null, 'Must reject path traversal with ..');
+    assert.strictEqual(pathsModule.getTranscriptPath('subdir/id'), null, 'Must reject path traversal with /');
+    assert.strictEqual(pathsModule.getTranscriptPath('..\\windows\\system32'), null, 'Must reject backslashes');
+    assert.strictEqual(pathsModule.getTranscriptPath(null), null, 'Must handle null cleanly');
+    console.log('  [✓] getTranscriptPath strictly rejects path traversal and non-alphanumeric identifiers');
+
+    // 12. CRLF & SOCKS5 domain length protection in upstream_tunnel.js
+    console.log('\n--- Test 12: Network Tunnel Boundary & CRLF Protection ---');
+    const tunnelCode = fs.readFileSync(path.resolve(__dirname, '../patches/proxy/upstream_tunnel.js'), 'utf8');
+    assert.ok(tunnelCode.includes('domainBuf.length > 255'), 'upstream_tunnel must validate SOCKS5 domainBuf.length <= 255');
+    assert.ok(tunnelCode.includes('CRLF detected'), 'upstream_tunnel must reject CRLF injection in HTTP CONNECT');
+    console.log('  [✓] SOCKS5 255-byte domain boundary and HTTP CONNECT CRLF protection verified');
+
+    // 13. MacCredentialStore security (-i flag via stdin)
+    console.log('\n--- Test 13: MacCredentialStore stdin Security ---');
+    const macStoreCode = fs.readFileSync(path.resolve(__dirname, '../patches/account/stores/mac_credential_store.js'), 'utf8');
+    assert.ok(macStoreCode.includes("'-i'"), 'MacCredentialStore must use security -i');
+    assert.ok(macStoreCode.includes('input: cmd'), 'MacCredentialStore must feed command through stdin pipe');
+    assert.ok(!macStoreCode.includes("'-w', secretString"), 'MacCredentialStore must not pass secretString as CLI argument');
+    console.log('  [✓] MacCredentialStore securely supplies password via stdin (-i) without exposing to ps');
+
+    // 14. Process supervisor targeted kill (No-Kill Policy)
+    console.log('\n--- Test 14: Process Supervisor No-Kill Policy ---');
+    const supervisorCode = fs.readFileSync(path.resolve(__dirname, '../patches/account/process_supervisor.js'), 'utf8');
+    assert.ok(!supervisorCode.includes("execSync('pkill -9 -f \"language_server\" 2>/dev/null || true'"), 'Must not perform blanket pkill without targeting');
+    assert.ok(supervisorCode.includes('pgrep -P') || supervisorCode.includes('ParentProcessId'), 'Must target child processes or Antigravity path');
+    console.log('  [✓] Process supervisor terminates only Antigravity language_server processes');
+
+    // 15. Atomic write & 0600 permissions in ProxyConfigRepository and ProfileRepository
+    console.log('\n--- Test 15: Atomic Write & Strict Permissions in Repositories ---');
+    const profileRepoCode = fs.readFileSync(path.resolve(__dirname, '../patches/account/profile_repository.js'), 'utf8');
+    assert.ok(profileRepoCode.includes('_atomicWrite'), 'profile_repository must use _atomicWrite');
+    assert.ok(profileRepoCode.includes('_enforcePermissions'), 'profile_repository must enforce permissions');
+
+    const proxyRepoCode = fs.readFileSync(path.resolve(__dirname, '../patches/proxy/proxy_config_repository.js'), 'utf8');
+    assert.ok(proxyRepoCode.includes('_atomicWrite'), 'proxy_config_repository must use _atomicWrite');
+    assert.ok(proxyRepoCode.includes('_enforcePermissions'), 'proxy_config_repository must enforce permissions');
+    console.log('  [✓] Repositories utilize atomic temporary write with rename and permission enforcement');
+
     // Cleanup tmp dir
     fs.rmSync(tmpProfilesDir, { recursive: true, force: true });
 

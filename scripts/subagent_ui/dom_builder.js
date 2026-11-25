@@ -1,17 +1,18 @@
 var _t = (typeof globalThis.__agyT !== 'undefined') ? globalThis.__agyT : (typeof require !== 'undefined' ? require('../locales/t_helper.js')._t : function(key, fallback) { return fallback; });
+var _effortFormatter = (typeof require !== 'undefined') ? require('../ui/effort_formatter.js') : null;
 
 /**
- * Local SSOT mirror of effort-level display names. The native model selector
- * maps xhigh -> "Extra" (bundle P4); the BYOK bundle exposes the same mapping
- * as globalThis.__agyByokFormatEffort, but this bundle may load before it, so
- * we keep a self-sufficient fallback with identical words.
+ * Effort level display name resolver (delegates to SSOT formatEffortLevel).
  */
 function _formatEffortLevel(lvl) {
-    const fn = globalThis.__agyByokFormatEffort;
+    if (typeof formatEffortLevel === 'function') return formatEffortLevel(lvl);
+    if (_effortFormatter && typeof _effortFormatter.formatEffortLevel === 'function') {
+        return _effortFormatter.formatEffortLevel(lvl);
+    }
+    const fn = (typeof globalThis !== 'undefined') ? (globalThis.__agyFormatEffortLevel || globalThis.__agyByokFormatEffort) : null;
     if (typeof fn === 'function') return fn(lvl);
-    const map = { none: 'None', off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
     const key = String(lvl || '').toLowerCase();
-    return map[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+    return key === 'xhigh' ? 'Extra' : (key.charAt(0).toUpperCase() + key.slice(1));
 }
 
 class SubagentDomBuilder {
@@ -468,7 +469,9 @@ class SubagentDomBuilder {
                     return String(nameA).localeCompare(String(nameB), undefined, { numeric: true, sensitivity: 'base' });
                 });
 
-                const EFFORT_WEIGHTS = { none: 0, off: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5 };
+                const weights = (typeof EFFORT_WEIGHTS !== 'undefined')
+                    ? EFFORT_WEIGHTS
+                    : ((_effortFormatter && _effortFormatter.EFFORT_WEIGHTS) || (typeof globalThis !== 'undefined' && globalThis.__agyEffortWeights) || { none: 0, off: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5 });
 
                 byokGroup = document.createElement('div');
                 byokGroup.className = 'agy-subagent-dropdown-group';
@@ -488,8 +491,8 @@ class SubagentDomBuilder {
 
                     const levels = (typeof m === 'object' && Array.isArray(m.reasoningLevels)) ? [...m.reasoningLevels] : [];
                     levels.sort((a, b) => {
-                        const wA = EFFORT_WEIGHTS[String(a).toLowerCase()] ?? 99;
-                        const wB = EFFORT_WEIGHTS[String(b).toLowerCase()] ?? 99;
+                        const wA = weights[String(a).toLowerCase()] ?? 99;
+                        const wB = weights[String(b).toLowerCase()] ?? 99;
                         if (wA !== wB) return wA - wB;
                         return String(a).localeCompare(String(b));
                     });

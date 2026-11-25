@@ -16,6 +16,7 @@ function bundleSubagentUi(targetFile = null) {
     path.resolve(__dirname, '../ui/fault_isolation.js'),
     path.resolve(__dirname, '../ui/settings_tab_base.js'),
     path.resolve(__dirname, '../ui/num_locale.js'),
+    path.resolve(__dirname, '../ui/effort_formatter.js'),
         'subagent_controller.js',
         'dom_builder.js',
         'settings_observer.js'

@@ -261,7 +261,7 @@ class CloudCodeProxy extends EventEmitter {
 
     _handleModelsResponse(buffer, isGzip) {
         try {
-            const decompressed = isGzip ? zlib.gunzipSync(buffer) : buffer;
+            const decompressed = isGzip ? zlib.gunzipSync(buffer, { maxOutputLength: 20 * 1024 * 1024 }) : buffer;
             let json = JSON.parse(decompressed.toString('utf8'));
             if (this.byokManager && typeof this.byokManager.injectAvailableModels === 'function') {
                 json = this.byokManager.injectAvailableModels(json);
@@ -398,6 +398,12 @@ class CloudCodeProxy extends EventEmitter {
         const { req, sniffer, reqBodyChunks } = ctx;
         req.on('data', (chunk) => {
             reqBodyChunks.push(chunk);
+            if (ctx.reqBodyLength) ctx.reqBodyLength += chunk.length;
+            else ctx.reqBodyLength = chunk.length;
+            if (ctx.reqBodyLength > 50 * 1024 * 1024) {
+                req.destroy(new Error('SSE request body exceeds 50MB limit'));
+                return;
+            }
             sniffer.feed(chunk);
         });
         req.on('end', () => {
@@ -834,7 +840,7 @@ class CloudCodeProxy extends EventEmitter {
         let hasNativeModels = false;
 
         try {
-            const decompressed = isGzip ? zlib.gunzipSync(buffer) : buffer;
+            const decompressed = isGzip ? zlib.gunzipSync(buffer, { maxOutputLength: 20 * 1024 * 1024 }) : buffer;
             let json = JSON.parse(decompressed.toString('utf8'));
             if (json && typeof json === 'object') {
                 jsonParsed = true;

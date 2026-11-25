@@ -55,13 +55,18 @@ public class AgyCredReader {
     public static string Read(string target) {
         IntPtr ptr;
         if (CredReadW(target, 1, 0, out ptr)) {
-            var c = (CREDENTIAL)Marshal.PtrToStructure(ptr, typeof(CREDENTIAL));
-            byte[] b = new byte[c.CredentialBlobSize];
-            Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);
-            CredFree(ptr);
-            return [Convert]::ToBase64String(b);
+            try {
+                var c = (CREDENTIAL)Marshal.PtrToStructure(ptr, typeof(CREDENTIAL));
+                if (c.CredentialBlobSize > 0 && c.CredentialBlob != IntPtr.Zero) {
+                    byte[] b = new byte[c.CredentialBlobSize];
+                    Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);
+                    return Convert.ToBase64String(b);
+                }
+            } finally {
+                CredFree(ptr);
+            }
         }
-        return $null;
+        return null;
     }
 }
 "@
@@ -115,17 +120,19 @@ public class AgyCredWriter {
     }
     public static bool Write(string target, string user, byte[] secret) {
         IntPtr blob = Marshal.AllocHGlobal(secret.Length);
-        Marshal.Copy(secret, 0, blob, secret.Length);
-        CREDENTIAL cred = new CREDENTIAL();
-        cred.Type = 1; // Generic
-        cred.TargetName = target;
-        cred.UserName = user;
-        cred.CredentialBlob = blob;
-        cred.CredentialBlobSize = secret.Length;
-        cred.Persist = 2; // Local machine
-        bool res = CredWriteW(ref cred, 0);
-        Marshal.FreeHGlobal(blob);
-        return res;
+        try {
+            Marshal.Copy(secret, 0, blob, secret.Length);
+            CREDENTIAL cred = new CREDENTIAL();
+            cred.Type = 1; // Generic
+            cred.TargetName = target;
+            cred.UserName = user;
+            cred.CredentialBlob = blob;
+            cred.CredentialBlobSize = secret.Length;
+            cred.Persist = 2; // Local machine
+            return CredWriteW(ref cred, 0);
+        } finally {
+            Marshal.FreeHGlobal(blob);
+        }
     }
 }
 "@

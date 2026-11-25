@@ -165,7 +165,7 @@ function buildByokModelDiscovery(state, controller) {
         modelsDiscoverBox.className = 'text-xs text-muted-foreground py-1';
         modelsDiscoverBox.textContent = 'Fetching model list from API...';
 
-        const res = await controller.fetchProviderModels({ endpoint: ep, apiKey: key, provider: prov });
+        const res = await controller.fetchProviderModels({ endpoint: ep, apiKey: key, provider: prov, id: state.m ? state.m.id : undefined });
         fetchModelsBtn.disabled = false;
         fetchModelsBtn.innerHTML = `<span>✨</span> <span>${_t('byok.fetch_models_btn', 'Fetch Models')}</span>`;
 

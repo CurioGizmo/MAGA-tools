@@ -73,6 +73,19 @@ assert.deepEqual(data.clientModelSorts[0].groups[0].modelLabels, [
     'Simple (BYOK)'
 ]);
 
+// 2b. groupedModels integration for Antigravity 2.34+ (lSb/dW in frontend main.js):
+// When groupedModels is present, models with >= 2 reasoning levels are grouped
+// natively with chevron submenu instead of appearing as flat separate rows.
+assert(data.groupedModels, 'cascadeModelConfigData.groupedModels must be defined');
+assert(data.groupedModels['glm'], 'glm must be in groupedModels');
+assert.equal(data.groupedModels['glm'].displayName, 'GLM 5.3l (BYOK)');
+assert.deepEqual(data.groupedModels['glm'].supportedThinkingLevels, [
+    { thinkingSuffix: 'low', thinkingDisplayName: 'Low' },
+    { thinkingSuffix: 'high', thinkingDisplayName: 'High' },
+    { thinkingSuffix: 'xhigh', thinkingDisplayName: 'Extra' }
+]);
+assert.equal(data.groupedModels['simple'], undefined, 'simple model (no reasoning) must not be in groupedModels');
+
 // 3. Idempotent re-sync: no duplicate insertion
 ByokModelSync._patchStateWithByok(s, variants);
 assert.equal(data.clientModelConfigs.length, 5);
@@ -81,6 +94,7 @@ assert.equal(data.clientModelConfigs.length, 5);
 ByokModelSync._patchStateWithByok(s, [], false);
 assert.deepEqual(s.cascadeModelConfigData.clientModelConfigs, [{ modelId: 'google-native', label: 'Gemini Pro' }]);
 assert.deepEqual(s.cascadeModelConfigData.clientModelSorts[0].groups[0].modelLabels, ['Gemini Pro']);
+assert.deepEqual(s.cascadeModelConfigData.groupedModels, {}, 'groupedModels must be clean when master disabled');
 
 // 5. Stale rehydrated cleanup
 const rehydrated = state();
@@ -174,6 +188,12 @@ assert.deepEqual(backendPayload.clientModelConfigs.map(c => c.label), [
 assert.equal(backendPayload.clientModelConfigs.length, 4);
 assert.equal(backendPayload.clientModelConfigs[1].maxTokens, 262144);
 assert.equal(backendPayload.clientModelConfigs[1].maxOutputTokens, 16384);
+
+// 6b-grouped. Backend groupedModels injection for v2.34+
+mockManager._applyGroupedModels(backendPayload, variants);
+assert(backendPayload.groupedModels, 'backendPayload.groupedModels must be defined');
+assert(backendPayload.groupedModels['glm'], 'backendPayload must include glm in groupedModels');
+assert.deepEqual(backendPayload.groupedModels['glm'].supportedThinkingLevels.map(t => t.thinkingSuffix), ['low', 'high', 'xhigh']);
 
 // 6c. Mock DOM separator and section header insertion
 (function testModelSelectorDivider() {
@@ -430,6 +450,186 @@ assert.equal(backendPayload.clientModelConfigs[1].maxOutputTokens, 16384);
     // Cleanup globals
     delete global.document;
     delete global.MutationObserver;
+})();
+
+// 8. Antigravity 2.34+ Native Grouping Algorithm Simulation (lSb/dW/gW/hW/w7c)
+(function testAntigravity234NativeGrouping() {
+    // Exact logic from Antigravity 2.34 frontend_main.js
+    const gSb = ['low', 'medium', 'high', 'xhigh', 'max'];
+    const aW = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
+    const hSb = new Map();
+    const iSb = /^(.*?)\s*\((low|medium|high|xhigh|max)(?:\s+thinking)?\)\s*$/i;
+    const jSb = a => {
+        const m = iSb.exec(a);
+        if (m) return { base: m[1].trim(), effort: m[2].toLowerCase() };
+    };
+    const bW = a => {
+        if (!a.isCustom) return hSb.get(a.value) ?? jSb(a.label);
+    };
+    const cW = new WeakMap();
+    const kSb = new WeakMap();
+
+    function lSb(a, b) {
+        var c = {
+            byOption: new WeakMap(),
+            byModelId: new Map(),
+            groupsByKey: new Map(),
+            groupsByDisplayName: new Map(),
+            firstOptionByLabel: new Map()
+        }, d = !1, f = new Map();
+        for (var g of a) {
+            g.isCustom || (
+                g.modelId && (d = !0, g.disabled || f.has(g.modelId) || f.set(g.modelId, g)),
+                !g.label || g.disabled || c.firstOptionByLabel.has(g.label) || c.firstOptionByLabel.set(g.label, g)
+            );
+        }
+        if (d || !a.some(n => !n.isCustom)) {
+            a = new Map();
+            for (const [n, p] of Object.entries(b)) {
+                b = n;
+                var h = p, k = h?.supportedThinkingLevels;
+                if (!b || !k?.length) continue;
+                d = new Map(); g = [];
+                var l = new Map(); const q = [];
+                for (const t of k) {
+                    k = t?.thinkingSuffix;
+                    if (!k || l.has(k)) continue;
+                    l.set(k, t.thinkingDisplayName || (Object.hasOwn(aW, k) ? aW[k] : void 0) || k);
+                    var m = `${b}-${k}`;
+                    q.push([m, k]);
+                    (m = f.get(m)) && !m.disabled && (d.set(k, m), g.push(k));
+                }
+                if (d.size === 0) continue;
+                k = d.get(g[0]);
+                h = h.displayName || (k ? jSb(k.label)?.base ?? k.label : "") || b;
+                a.set(b, d);
+                kSb.set(d, g);
+                c.groupsByKey.set(b, { displayName: h, byEffort: d, labels: l });
+                c.groupsByDisplayName.set(h, c.groupsByDisplayName.has(h) ? null : b);
+                for (const [t, u] of q) g = t, l = u, c.byModelId.has(g) || c.byModelId.set(g, { groupKey: b, effort: l });
+                for (const [t, u] of d) c.byOption.set(u, { groupKey: b, effort: t });
+            }
+            cW.set(a, c);
+            return a;
+        }
+    }
+
+    const dW = (a, b) => {
+        if (a.length === 0) return new Map();
+        if (b && Object.keys(b).length > 0 && (b = lSb(a, b))) return b;
+        b = new Map();
+        for (const c of a) {
+            a = bW(c);
+            if (!a) continue;
+            let d = b.get(a.base);
+            d || (d = new Map(), b.set(a.base, d));
+            d.has(a.effort) || d.set(a.effort, c);
+        }
+        return b;
+    };
+
+    const eW = a => {
+        var b = a ? kSb.get(a) : void 0;
+        return b ? [...b] : a ? gSb.filter(c => a.has(c)) : [];
+    };
+
+    function fW(a, b) {
+        if (!b.isCustom) {
+            var c = a.firstOptionByLabel.get(b.label) ?? b;
+            return a.byOption.get(c) ?? (c.modelId ? a.byModelId.get(c.modelId) : void 0) ?? (b.modelId ? a.byModelId.get(b.modelId) : void 0);
+        }
+    }
+
+    function gW(a, b) {
+        if (!a.isCustom) {
+            var c = cW.get(b);
+            return c ? (a = fW(c, a)) && (b.get(a.groupKey)?.size ?? 0) >= 2 ? a.groupKey : void 0
+                     : (a = bW(a)) && (b.get(a.base)?.size ?? 0) >= 2 ? a.base : void 0;
+        }
+    }
+
+    const hW = (a, b) => {
+        var c = cW.get(b);
+        if (c) {
+            return b = (b = fW(c, a)) ? c.groupsByKey.get(b.groupKey) : void 0,
+                   !b || b.byEffort.size < 2 ? void 0 : { base: b.displayName, efforts: eW(b.byEffort), byEffort: b.byEffort };
+        }
+        if ((c = bW(a)) && (b = b.get(c.base)) && !(b.size < 2)) {
+            return { base: c.base, efforts: eW(b), byEffort: b };
+        }
+    };
+
+    function simulateW7cReduction(options, effortIndex) {
+        const y = new Set();
+        const z = [];
+        for (const A of options) {
+            const w = gW(A, effortIndex);
+            const C = w !== void 0 ? effortIndex.get(w) : void 0;
+            if (w === void 0 || !C || C.size < 2) {
+                z.push(A);
+            } else if (!y.has(w)) {
+                y.add(w);
+                z.push(A);
+            }
+        }
+        return z;
+    }
+
+    // Prepare state with Google native models + BYOK
+    const s234 = {
+        cascadeModelConfigData: {
+            clientModelConfigs: [
+                { modelId: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
+                { modelId: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' }
+            ],
+            clientModelSorts: [{ groups: [{ modelLabels: ['Gemini 3.8 Flash (Low)', 'Gemini 3.8 Flash (High)'] }] }],
+            groupedModels: {
+                'gemini-3.8-flash': {
+                    displayName: 'Gemini 3.8 Flash',
+                    supportedThinkingLevels: [
+                        { thinkingSuffix: 'low', thinkingDisplayName: 'Low' },
+                        { thinkingSuffix: 'high', thinkingDisplayName: 'High' }
+                    ]
+                }
+            }
+        }
+    };
+
+    ByokModelSync._patchStateWithByok(s234, variants);
+    const patchedData = s234.cascadeModelConfigData;
+
+    // Verify BYOK was merged into groupedModels
+    assert(patchedData.groupedModels['gemini-3.8-flash'], 'Native Gemini preserved in groupedModels');
+    assert(patchedData.groupedModels['glm'], 'BYOK GLM merged into groupedModels');
+
+    // Run 2.34 dW on the patched state:
+    const modelOptions = patchedData.clientModelConfigs;
+    const effortIndex = dW(modelOptions, patchedData.groupedModels);
+
+    // Verify GLM variants are recognized by gW and grouped:
+    const glmLow = modelOptions.find(c => c.modelId === 'glm-low');
+    const glmHigh = modelOptions.find(c => c.modelId === 'glm-high');
+    const glmXhigh = modelOptions.find(c => c.modelId === 'glm-xhigh');
+
+    assert.equal(gW(glmLow, effortIndex), 'glm', 'glm-low must map to group key glm');
+    assert.equal(gW(glmHigh, effortIndex), 'glm', 'glm-high must map to group key glm');
+    assert.equal(gW(glmXhigh, effortIndex), 'glm', 'glm-xhigh must map to group key glm');
+
+    // Verify hW returns full effort menu for GLM:
+    const hwGlm = hW(glmLow, effortIndex);
+    assert(hwGlm, 'hW must return effort group definition');
+    assert.equal(hwGlm.base, 'GLM 5.3l (BYOK)');
+    assert.deepEqual(hwGlm.efforts, ['low', 'high', 'xhigh']);
+
+    // Verify w7c reduces the 3 GLM variants to 1 dropdown row:
+    const sortLabels = patchedData.clientModelSorts[0].groups[0].modelLabels;
+    const sortOptions = sortLabels.map(lbl => modelOptions.find(c => c.label === lbl)).filter(Boolean);
+    const reducedRows = simulateW7cReduction(sortOptions, effortIndex);
+
+    // Expected rows: 1 Gemini (group), 1 GLM (group), 1 Simple (flat) = 3 rows total
+    assert.equal(reducedRows.length, 3, `Expected 3 dropdown rows after grouping, got ${reducedRows.length}`);
+    const glmRow = reducedRows.find(r => r.modelId.startsWith('glm-'));
+    assert(glmRow, 'Single GLM group row must be present in dropdown');
 })();
 
 console.log('BYOK chat variant UI tests passed');

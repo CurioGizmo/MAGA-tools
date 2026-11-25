@@ -299,8 +299,10 @@ class ByokController {
         const models = [];
 
         if (provider === 'gemini' || (endpoint && endpoint.includes('googleapis.com'))) {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey || ''}`;
-            const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models';
+            const headers = {};
+            if (apiKey) headers['x-goog-api-key'] = apiKey;
+            const res = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
             if (res.ok) {
                 const data = await res.json();
                 for (const m of (data.models || [])) {

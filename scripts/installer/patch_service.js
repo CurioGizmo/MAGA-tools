@@ -80,6 +80,40 @@ function ensurePatchedAsar(targetDir, forceRebuild = false) {
     throw new Error(_t('installer.build_failed'));
 }
 
+function backupUserConfigs() {
+    try {
+        const { getMagaDataDir } = require('../utils/paths');
+        const dataDir = getMagaDataDir();
+        if (!fs.existsSync(dataDir)) return;
+
+        const proxyFile = path.join(dataDir, 'proxy_config.json');
+        if (fs.existsSync(proxyFile)) {
+            try {
+                const raw = fs.readFileSync(proxyFile, 'utf8');
+                const parsed = JSON.parse(raw);
+                if (parsed && parsed.host && parsed.port) {
+                    const bak = proxyFile + '.bak';
+                    fs.copyFileSync(proxyFile, bak);
+                    fs.chmodSync(bak, 0o600);
+                }
+            } catch (_) {}
+        }
+
+        const byokFile = path.join(dataDir, 'byok_config.json');
+        if (fs.existsSync(byokFile)) {
+            try {
+                const raw = fs.readFileSync(byokFile, 'utf8');
+                const parsed = JSON.parse(raw);
+                if (parsed && Array.isArray(parsed.models) && parsed.models.length > 0) {
+                    const bak = byokFile + '.bak';
+                    fs.copyFileSync(byokFile, bak);
+                    fs.chmodSync(bak, 0o600);
+                }
+            } catch (_) {}
+        }
+    } catch (_) {}
+}
+
 function patchLanguageServerCap(resourcesDir) {
     const { recordPatchTelemetry } = require('../utils/patch_telemetry');
     try {
@@ -264,6 +298,10 @@ async function performPatch(status, skipTerminate = false) {
     // Locate or build patched asar
     const sourcePatched = ensurePatchedAsar(status.resourcesDir);
     console.log(_t('installer.asar_from', { path: sourcePatched }));
+
+    // Ensure user configurations (proxy, byok) are safely backed up before applying new patch
+    backupUserConfigs();
+
     const tempDest = asarPath + '.tmp_' + Date.now();
     try {
         fs.copyFileSync(sourcePatched, tempDest);

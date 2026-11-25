@@ -265,7 +265,7 @@ get_antigravity_version() {
     fi
     if command -v node >/dev/null 2>&1; then
         local node_ver
-        node_ver="$(node -e 'const { getAntigravityVersion } = require("'"$SCRIPT_DIR"'/utils/paths.js"); console.log(getAntigravityVersion("'"$target_dir"'") || "");' 2>/dev/null || true)"
+        node_ver="$(node -e 'const { getAntigravityVersion } = require(require("path").join(process.argv[1], "utils", "paths.js")); console.log(getAntigravityVersion(process.argv[2]) || "");' "$SCRIPT_DIR" "$target_dir" 2>/dev/null || true)"
         if [ -n "$node_ver" ]; then
             echo "$node_ver"
             return 0
@@ -389,7 +389,8 @@ perform_rollback() {
     ensure_antigravity_closed
 
     echo -e "    ${GREEN}[+] Восстановление оригинального app.asar из $(basename "$bak_to_restore")...${NC}"
-    cp -f "$bak_to_restore" "$asar_path"
+    cp -f "$bak_to_restore" "$asar_path.tmp"
+    mv -f "$asar_path.tmp" "$asar_path"
 
     # Remove backup files so status returns to clean [Оригинал]
     rm -f "$clean_bak" "$legacy_bak" "$legacy_bak2"

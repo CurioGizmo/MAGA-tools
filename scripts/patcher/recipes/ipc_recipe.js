@@ -58,6 +58,13 @@ function applyIpcRecipe(targetDir) {
         fs.cpSync(byokSrc, dest, { recursive: true });
         console.log('  [+] Placed dist/byok/ (BYOK External Models & Translators)');
     }
+    const effortFormatterSrc = path.resolve(__dirname, '../../ui/effort_formatter.js');
+    if (fs.existsSync(effortFormatterSrc)) {
+        const uiDestDir = path.join(targetDir, 'dist', 'ui');
+        fs.mkdirSync(uiDestDir, { recursive: true });
+        fs.copyFileSync(effortFormatterSrc, path.join(uiDestDir, 'effort_formatter.js'));
+        console.log('  [+] Placed dist/ui/effort_formatter.js');
+    }
 
     // 6. dist/ipcHandlers.js: Register IPC Handlers
     const ipcHandlersPath = path.join(targetDir, 'dist', 'ipcHandlers.js');

@@ -139,9 +139,45 @@ try {
     assert.ok(loaded.bypass.includes('intranet.company.com'));
     console.log('  [✓] Loaded configuration matches saved data with enforced loopback bypass');
 
+    // === Test 3: Auto-Backup (.bak) and Auto-Recovery ===
+    console.log('\n=== Test 3: ProxyConfigRepository Auto-Backup (.bak) & Recovery ===');
+    const bakPath = tempConfigPath + '.bak';
+
+    // 1. Save updated valid config — should create .bak of the first config
+    const toSave2 = {
+        ...toSave,
+        host: '203.0.113.10',
+        port: 1080
+    };
+    repo.save(toSave2);
+    assert.strictEqual(fs.existsSync(bakPath), true, '.bak file must be created on update');
+    const bakContent = JSON.parse(fs.readFileSync(bakPath, 'utf8'));
+    assert.strictEqual(bakContent.host, '198.51.100.50', '.bak must contain previous valid host');
+    if (process.platform !== 'win32') {
+        const statBak = fs.statSync(bakPath);
+        assert.strictEqual(statBak.mode & 0o777, 0o600, '.bak must have 0600 mode');
+    }
+    console.log('  [✓] Automatic .bak created with previous valid config and 0600 permissions');
+
+    // 2. Remove primary file (simulating loss during upgrade or migration)
+    fs.unlinkSync(tempConfigPath);
+    assert.strictEqual(fs.existsSync(tempConfigPath), false);
+
+    // 3. load() should detect missing primary file and restore from .bak
+    const restored = repo.load();
+    assert.strictEqual(restored.host, '198.51.100.50', 'load() must restore from .bak when primary file is missing');
+    assert.strictEqual(restored.port, 9228);
+    // And verify that primary file was repaired on disk
+    const repairedDisk = JSON.parse(fs.readFileSync(tempConfigPath, 'utf8'));
+    assert.strictEqual(repairedDisk.host, '198.51.100.50', 'load() must auto-repair primary file from .bak');
+    console.log('  [✓] load() automatically restored and recreated config from .bak upon file loss');
+
 } finally {
     if (fs.existsSync(tempConfigPath)) {
-        fs.unlinkSync(tempConfigPath);
+        try { fs.unlinkSync(tempConfigPath); } catch (_) {}
+    }
+    if (fs.existsSync(tempConfigPath + '.bak')) {
+        try { fs.unlinkSync(tempConfigPath + '.bak'); } catch (_) {}
     }
 }
 

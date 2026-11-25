@@ -16,6 +16,7 @@ function bundleByokUi(targetFile = null) {
     path.resolve(__dirname, '../ui/fault_isolation.js'),
     path.resolve(__dirname, '../ui/settings_tab_base.js'),
     path.resolve(__dirname, '../ui/num_locale.js'),
+    path.resolve(__dirname, '../ui/effort_formatter.js'),
     path.resolve(__dirname, '../patches/byok/mime_types.js'),
         'byok_sync.js',
         'byok_controller.js',

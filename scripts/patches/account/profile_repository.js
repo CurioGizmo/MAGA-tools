@@ -99,11 +99,12 @@ class ProfileRepository {
             fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
         }
 
-        // 1. credentials.json (Strict 0o600 permissions)
+        // 1. credentials.json (Strict 0o600 permissions, atomic write)
         const credPath = path.join(profileDir, 'credentials.json');
-        fs.writeFileSync(credPath, profileData.raw, { mode: 0o600, encoding: 'utf8' });
+        this._atomicWrite(credPath, profileData.raw);
+        this._enforcePermissions(credPath);
 
-        // 2. profile.json metadata (Strict 0o600 permissions)
+        // 2. profile.json metadata (Strict 0o600 permissions, atomic write)
         const metaPath = path.join(profileDir, 'profile.json');
         let meta = {};
         if (fs.existsSync(metaPath)) {
@@ -122,8 +123,36 @@ class ProfileRepository {
         meta.lastActiveAt = new Date().toISOString();
         if (!meta.createdAt) meta.createdAt = meta.lastActiveAt;
 
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { mode: 0o600, encoding: 'utf8' });
+        this._atomicWrite(metaPath, JSON.stringify(meta, null, 2));
+        this._enforcePermissions(metaPath);
         return true;
+    }
+
+    _atomicWrite(filePath, content) {
+        const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
+        fs.writeFileSync(tempPath, content, { mode: 0o600, encoding: 'utf8' });
+        try {
+            fs.renameSync(tempPath, filePath);
+        } catch (err) {
+            try {
+                fs.copyFileSync(tempPath, filePath);
+                try { fs.unlinkSync(tempPath); } catch (_) {}
+            } catch (fallbackErr) {
+                try { fs.unlinkSync(tempPath); } catch (_) {}
+                throw err || fallbackErr;
+            }
+        }
+    }
+
+    _enforcePermissions(filePath) {
+        try {
+            if (process.platform === 'win32' && process.env.USERNAME) {
+                const { execFileSync } = require('child_process');
+                execFileSync('icacls.exe', [filePath, '/inheritance:r', '/grant:r', `${process.env.USERNAME}:(R,W)`], { stdio: 'ignore' });
+            } else {
+                fs.chmodSync(filePath, 0o600);
+            }
+        } catch (_) {}
     }
 
     async getSavedAccounts(activeAccount = null) {

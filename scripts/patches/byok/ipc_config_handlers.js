@@ -49,7 +49,8 @@ function registerConfigIpcHandlers(ipcMain, ctx) {
             const modelsToSave = (incomingConfig.models || []).map(m => {
                 const existing = currentModelsMap.get(m.id);
                 let apiKey = m.apiKey;
-                if (existing && apiKey && (apiKey.includes('...') || apiKey === '********')) {
+                const isMasked = apiKey === '********' || (existing && (apiKey === repo.maskKey(existing.apiKey) || (apiKey.includes('...') && apiKey.length <= 16)));
+                if (existing && isMasked) {
                     apiKey = existing.apiKey;
                 }
                 return {
@@ -90,10 +91,11 @@ function registerConfigIpcHandlers(ipcMain, ctx) {
 
             // Restore key if masked
             let effectiveKey = modelData.apiKey;
-            if (effectiveKey && (effectiveKey.includes('...') || effectiveKey === '********')) {
-                const current = repo.load();
-                const existing = (current.models || []).find(m => m.id === modelData.id);
-                if (existing) effectiveKey = existing.apiKey;
+            const current = repo.load();
+            const existing = (current.models || []).find(m => modelData.id && m.id === modelData.id);
+            const isMasked = effectiveKey === '********' || (existing && (effectiveKey === repo.maskKey(existing.apiKey) || (effectiveKey.includes('...') && effectiveKey.length <= 16)));
+            if (existing && isMasked && (!modelData.endpoint || existing.endpoint === modelData.endpoint)) {
+                effectiveKey = existing.apiKey;
             }
 
             const testData = {

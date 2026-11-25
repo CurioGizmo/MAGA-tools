@@ -299,6 +299,36 @@ try {
     assert.strictEqual(getEffectiveCompactionThreshold({ maxTokens: 1048576, maxOutputTokens: 65536, compactionThreshold: getInjectedCompactionThreshold(modelRoundTrip) >= 1048576 ? 1048576 : 500000 }), 500000, 'Round-trip preserves user intent');
     console.log('  [✓] getEffectiveCompactionThreshold and model injection formulas verified');
 
+    // 8. Auto-Backup (.bak) and Recovery
+    console.log('\n--- Test 8: ByokConfigRepository Auto-Backup (.bak) & Recovery ---');
+    const byokBakPath = testConfigPath + '.bak';
+    // Repo currently has glmConfig saved. Saving another config should create .bak of glmConfig.
+    const updatedByokConfig = {
+        enabled: true,
+        models: [
+            {
+                id: 'new-model-xyz',
+                displayName: 'New Model XYZ',
+                provider: 'openai',
+                endpoint: 'https://api.openai.com/v1',
+                modelName: 'gpt-4o',
+                apiKey: 'sk-test-key'
+            }
+        ]
+    };
+    repo.save(updatedByokConfig);
+    assert.strictEqual(fs.existsSync(byokBakPath), true, 'BYOK .bak must exist after update');
+    const bakByokData = JSON.parse(fs.readFileSync(byokBakPath, 'utf8'));
+    assert.strictEqual(bakByokData.models[0].id, 'byok-glm', '.bak must preserve previous models');
+
+    // Simulate primary file loss (e.g. migration to new version or missing config)
+    fs.unlinkSync(testConfigPath);
+    assert.strictEqual(fs.existsSync(testConfigPath), false);
+    const restoredByok = repo.load();
+    assert.strictEqual(restoredByok.models[0].id, 'byok-glm', 'load() must restore models from .bak when primary file is missing');
+    assert.strictEqual(JSON.parse(fs.readFileSync(testConfigPath, 'utf8')).models[0].id, 'byok-glm', 'load() must repair primary file on disk');
+    console.log('  [✓] BYOK automatic .bak created and missing config auto-restored from .bak');
+
     console.log('\n=== ALL BYOK REPOSITORY & MANAGER TESTS PASSED! ✓ ===');
 } finally {
     try {

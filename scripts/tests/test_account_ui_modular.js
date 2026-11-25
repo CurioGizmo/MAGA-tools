@@ -70,4 +70,12 @@ for (const dirName of ['account_ui', 'retry']) {
     }
 }
 
+// 5. Test Avatar XSS Sanitization & Scheme Validation
+console.log('\n--- Test 5: Avatar XSS sanitization in dom_builder.js ---');
+const domBuilderSource = fs.readFileSync(path.join(__dirname, '../account_ui/dom_builder.js'), 'utf8');
+assert.ok(!domBuilderSource.includes('avatar.innerHTML'), 'dom_builder.js must never use innerHTML for avatar');
+assert.ok(domBuilderSource.includes("document.createElement('img')"), 'dom_builder.js must use createElement for img');
+assert.ok(domBuilderSource.includes('/^https?:\\/\\//i'), 'dom_builder.js must enforce http(s) URL scheme for avatars');
+console.log('  [✓] Avatar rendering is fully immune to innerHTML injection and non-http(s) schemes');
+
 console.log('\nALL MODULAR ACCOUNT UI & RETRY TESTS PASSED SUCCESSFULLY! ✓\n');

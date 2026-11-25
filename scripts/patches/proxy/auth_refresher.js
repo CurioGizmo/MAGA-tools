@@ -40,13 +40,26 @@ const OAUTH_PATH = '/token';
 function resolveOauthClientSecret(clientId) {
     if (process.env.AGY_OAUTH_CLIENT_SECRET) return process.env.AGY_OAUTH_CLIENT_SECRET;
 
-    const candidates = [
-        process.env.AGY_LS_BINARY_PATH,
-        path.join(path.dirname(process.execPath), 'language_server'),
-        path.join(path.dirname(process.execPath), '..', 'bin', 'language_server'),
-        path.join(process.resourcesPath || '', 'bin', 'language_server'),
-        path.join(process.resourcesPath || '', 'app.asar.unpacked', 'language_server')
-    ].filter(Boolean);
+    const isWin = process.platform === 'win32';
+    const binaryNames = isWin
+        ? ['language_server_windows_x64.exe', 'language_server.exe']
+        : ['language_server'];
+
+    const baseDirs = [
+        path.dirname(process.execPath),
+        path.join(path.dirname(process.execPath), '..', 'bin'),
+        path.join(process.resourcesPath || '', 'bin'),
+        path.join(process.resourcesPath || '', 'app.asar.unpacked')
+    ];
+
+    const candidates = [process.env.AGY_LS_BINARY_PATH];
+    for (const bName of binaryNames) {
+        for (const dir of baseDirs) {
+            candidates.push(path.join(dir, bName));
+        }
+    }
+
+    const validCandidates = candidates.filter(Boolean);
 
     const MARKER = 'https://auth.cloud.google/authorize';
     const SECRET_RE = /GOCSPX-[A-Za-z0-9_-]{20,}/g;
@@ -60,7 +73,7 @@ function resolveOauthClientSecret(clientId) {
         return glueIdx === -1 ? candidate : candidate.slice(0, glueIdx);
     }
 
-    for (const binPath of candidates) {
+    for (const binPath of validCandidates) {
         try {
             if (!fs.existsSync(binPath)) continue;
             // Read in chunks to keep memory bounded on a ~180 MB Go binary.
@@ -91,6 +104,7 @@ function resolveOauthClientSecret(clientId) {
                         const winStart = Math.max(0, idIdx - 65536);
                         const winEnd = Math.min(buf.length, idIdx + 65536);
                         const window = buf.slice(winStart, winEnd).toString('latin1');
+                        SECRET_RE.lastIndex = 0;
                         const near = SECRET_RE.exec(window);
                         if (near) return trimSecret(near[0]);
                     }
@@ -101,10 +115,11 @@ function resolveOauthClientSecret(clientId) {
                         const nextBuf = Buffer.alloc(nextLen);
                         fs.readSync(fd, nextBuf, 0, nextLen, offset + CHUNK);
                         const window = Buffer.concat([buf.slice(idIdx), nextBuf]).slice(0, 131072).toString('latin1');
+                        SECRET_RE.lastIndex = 0;
                         const nearNext = SECRET_RE.exec(window);
                         if (nearNext) return trimSecret(nearNext[0]);
                     }
-                    offset += CHUNK - (offset === 0 ? 0 : OVERLAP);
+                    offset += (CHUNK - OVERLAP);
                     if (offset <= 0) break; // safety: never loop forever
                 }
             } finally {
@@ -127,16 +142,39 @@ class AuthRefresher {
 
     readTokenData() {
         try {
-            if (!fs.existsSync(this.tokenPath)) return null;
-            const raw = fs.readFileSync(this.tokenPath, 'utf8').trim();
-            if (!raw) return null;
-            const data = JSON.parse(raw);
-            if (!data || typeof data !== 'object') return null;
-
-            const refreshToken = (data.token && data.token.refresh_token) || data.refresh_token || null;
-            const accessToken = (data.token && data.token.access_token) || data.access_token || null;
-
-            return { data, raw, refreshToken, accessToken };
+            if (fs.existsSync(this.tokenPath)) {
+                const raw = fs.readFileSync(this.tokenPath, 'utf8').trim();
+                if (raw) {
+                    const data = JSON.parse(raw);
+                    if (data && typeof data === 'object') {
+                        const refreshToken = (data.token && data.token.refresh_token) || data.refresh_token || null;
+                        const accessToken = (data.token && data.token.access_token) || data.access_token || null;
+                        return { data, raw, refreshToken, accessToken };
+                    }
+                }
+            }
+            // Cross-platform fallback: CredentialStore on Windows / macOS
+            try {
+                let StoreFactory = null;
+                try {
+                    StoreFactory = require('../account/stores/store_factory');
+                } catch (_) {
+                    try { StoreFactory = require('../../patches/account/stores/store_factory'); } catch (__) {}
+                }
+                if (StoreFactory && typeof StoreFactory.getCredentialStore === 'function') {
+                    const store = StoreFactory.getCredentialStore(process.platform);
+                    const raw = store.read();
+                    if (raw) {
+                        const data = JSON.parse(raw);
+                        if (data && typeof data === 'object') {
+                            const refreshToken = (data.token && data.token.refresh_token) || data.refresh_token || null;
+                            const accessToken = (data.token && data.token.access_token) || data.access_token || null;
+                            return { data, raw, refreshToken, accessToken, fromStore: true };
+                        }
+                    }
+                }
+            } catch (_) {}
+            return null;
         } catch (_) {
             return null;
         }
@@ -145,17 +183,36 @@ class AuthRefresher {
     writeTokenAtomic(data) {
         if (!data || typeof data !== 'object') return false;
         try {
-            const dir = path.dirname(this.tokenPath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-            }
-            const tmpPath = `${this.tokenPath}.tmp.${process.pid}.${Date.now()}`;
             const content = JSON.stringify(data, null, 2);
-            fs.writeFileSync(tmpPath, content, { mode: 0o600, encoding: 'utf8' });
-            try { fs.chmodSync(tmpPath, 0o600); } catch (_) {}
-            fs.renameSync(tmpPath, this.tokenPath);
-            try { fs.chmodSync(this.tokenPath, 0o600); } catch (_) {}
-            return true;
+            let storeOk = false;
+            try {
+                let StoreFactory = null;
+                try {
+                    StoreFactory = require('../account/stores/store_factory');
+                } catch (_) {
+                    try { StoreFactory = require('../../patches/account/stores/store_factory'); } catch (__) {}
+                }
+                if (StoreFactory && typeof StoreFactory.getCredentialStore === 'function') {
+                    const store = StoreFactory.getCredentialStore(process.platform);
+                    storeOk = Boolean(store.write(content));
+                }
+            } catch (_) {}
+
+            let fileOk = false;
+            try {
+                const dir = path.dirname(this.tokenPath);
+                if (!fs.existsSync(dir)) {
+                    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+                }
+                const tmpPath = `${this.tokenPath}.tmp.${process.pid}.${Date.now()}`;
+                fs.writeFileSync(tmpPath, content, { mode: 0o600, encoding: 'utf8' });
+                try { fs.chmodSync(tmpPath, 0o600); } catch (_) {}
+                fs.renameSync(tmpPath, this.tokenPath);
+                try { fs.chmodSync(this.tokenPath, 0o600); } catch (_) {}
+                fileOk = true;
+            } catch (_) {}
+
+            return storeOk || fileOk;
         } catch (e) {
             console.error('[AuthRefresher] Failed to write token atomically:', e.message);
             return false;

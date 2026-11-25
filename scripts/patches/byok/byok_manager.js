@@ -4,7 +4,7 @@
  * and live connection testing.
  */
 
-const { ByokConfigRepository, RESERVED_SLOTS, parseTierModelKey, getInjectedCompactionThreshold } = require('./byok_config_repository');
+const { ByokConfigRepository, RESERVED_SLOTS, parseTierModelKey, getInjectedCompactionThreshold, formatEffortLevelName, buildByokGroupedModels, isUnsupportedEffortLevel } = require('./byok_config_repository');
 const { OpenAiTranslator } = require('./translators/openai_translator');
 const { AnthropicTranslator } = require('./translators/anthropic_translator');
 const { GeminiTranslator } = require('./translators/gemini_translator');
@@ -327,16 +327,15 @@ class ByokManager {
         // not publish none/off configs — "None" stays selectable via our injected
         // submenu item; routing keeps working via jsonPayload.models. A model with
         // ONLY none/off levels still publishes its single representative row.
-        const isUnsupportedLevel = label => /\((none|off)(?:\s+thinking)?\)$/i.test(label);
         const byModel = new Map();
         for (const v of variants) {
             if (!byModel.has(v.baseModelId)) byModel.set(v.baseModelId, []);
             byModel.get(v.baseModelId).push(v);
         }
         const publishable = variants.filter(v => {
-            if (!isUnsupportedLevel(v.label)) return true;
+            if (!isUnsupportedEffortLevel(v.label)) return true;
             const siblings = byModel.get(v.baseModelId) || [v];
-            return !siblings.some(s => !isUnsupportedLevel(s.label));
+            return !siblings.some(s => !isUnsupportedEffortLevel(s.label));
         });
 
         // Alphabetical row order for the published BYOK block: the native
@@ -410,7 +409,7 @@ class ByokManager {
         // model whose levels are ONLY none/off keeps one flat representative row.
         const sortVisibleVariants = [];
         for (const [, modelVariants] of byModel) {
-            const standard = modelVariants.filter(v => !isUnsupportedLevel(v.label));
+            const standard = modelVariants.filter(v => !isUnsupportedEffortLevel(v.label));
             if (standard.length > 0) {
                 sortVisibleVariants.push(...standard);
             } else if (modelVariants.length > 0) {
@@ -532,7 +531,34 @@ class ByokManager {
         // 4. Support clientModelConfigs for active BYOK models (virtual tiers are excluded!)
         this._applyClientModelConfigs(jsonPayload, publishable);
 
+        // 5. Populate groupedModels for models with >= 2 reasoning levels so Antigravity 2.34+
+        // effort-grouping (lSb/dW in frontend main.js) natively groups them with chevron submenu instead of flat rows.
+        this._applyGroupedModels(jsonPayload, publishable);
+
         return jsonPayload;
+    }
+
+    /**
+     * Injects groupedModels entries for BYOK models with reasoning levels.
+     * In Antigravity 2.34+, the model selector delegates effort submenu grouping
+     * to `groupedModels` (lSb/dW in frontend main.js). When groupedModels is present,
+     * models missing from it will never be grouped into submenus.
+     */
+    _applyGroupedModels(jsonPayload, variants) {
+        if (!jsonPayload || typeof jsonPayload !== 'object') return;
+        if (!jsonPayload.groupedModels || typeof jsonPayload.groupedModels !== 'object') {
+            jsonPayload.groupedModels = {};
+        }
+
+        const byokGrouped = buildByokGroupedModels(variants, formatEffortLevelName);
+        Object.assign(jsonPayload.groupedModels, byokGrouped);
+
+        if (jsonPayload.cascadeModelConfigData && typeof jsonPayload.cascadeModelConfigData === 'object') {
+            if (!jsonPayload.cascadeModelConfigData.groupedModels || typeof jsonPayload.cascadeModelConfigData.groupedModels !== 'object') {
+                jsonPayload.cascadeModelConfigData.groupedModels = {};
+            }
+            Object.assign(jsonPayload.cascadeModelConfigData.groupedModels, jsonPayload.groupedModels);
+        }
     }
 
     _sendErrorResponse(clientRes, statusCode, message, rpcStatus = null) {
@@ -1060,8 +1086,12 @@ class ByokManager {
         try {
             if (provider === 'gemini') {
                 const endpoint = (modelData.endpoint || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
-                const url = `${endpoint}/v1beta/models?key=${encodeURIComponent(modelData.apiKey || '')}`;
-                const res = await this._httpGet(url, {}, tunnelAgent);
+                const url = `${endpoint}/v1beta/models`;
+                const headers = {};
+                if (modelData.apiKey) {
+                    headers['x-goog-api-key'] = modelData.apiKey;
+                }
+                const res = await this._httpGet(url, headers, tunnelAgent);
                 const latencyMs = Date.now() - start;
                 return {
                     success: res.statusCode === 200,

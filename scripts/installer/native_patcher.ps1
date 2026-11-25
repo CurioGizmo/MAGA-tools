@@ -190,6 +190,12 @@ function Apply-NativePatches {
     if (Test-Path $srcByok) {
         Copy-Item -Path $srcByok -Destination $dstByok -Recurse -Force
     }
+    $srcEffort = Join-Path $scriptsDir "ui\effort_formatter.js"
+    if (Test-Path $srcEffort) {
+        $dstUi = Join-Path $BuildDir "dist\ui"
+        if (-not (Test-Path $dstUi)) { [System.IO.Directory]::CreateDirectory($dstUi) | Out-Null }
+        Copy-Item $srcEffort (Join-Path $dstUi "effort_formatter.js") -Force
+    }
 
     # Standalone IPC & selector scripts
     Copy-Item (Join-Path $scriptsDir "patches\agy_token_ipc.js") (Join-Path $BuildDir "dist\agy_token_ipc.js") -Force

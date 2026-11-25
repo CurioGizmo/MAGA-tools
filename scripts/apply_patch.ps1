@@ -171,13 +171,20 @@ function Get-InstallationStatus {
     $hasBackup = $hasCleanBak -or $hasLegacyBak
     $backupPath = if ($hasCleanBak) { $cleanBak } elseif ($hasLegacyBak) { $legacyBak } else { $cleanBak }
 
-    $isPatched = $hasBackup
-    if (-not $isPatched -and $hasAsar) {
+    $isPatched = $false
+    if ($hasAsar) {
         try {
-            $bytes = [System.IO.File]::ReadAllBytes($asarPath)
-            $content = [System.Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min($bytes.Length, 8192))
-            if ($content -match "agyBridge" -or $content -match "agy-token-hud") {
-                $isPatched = $true
+            $fs = [System.IO.File]::OpenRead($asarPath)
+            try {
+                $len = [int][Math]::Min($fs.Length, 65536)
+                $buf = New-Object byte[] $len
+                $read = $fs.Read($buf, 0, $len)
+                $content = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+                if ($content -match "agyBridge|agy-token-hud|agy_token_ipc|account_manager\.js") {
+                    $isPatched = $true
+                }
+            } finally {
+                $fs.Close()
             }
         } catch {}
     }
@@ -326,19 +333,28 @@ function Invoke-PatchAction($status, [switch]$Rebuild) {
     $cleanBak = Join-Path $status.ResourcesDir $BACKUP_FILENAME
     $legacyBak = Join-Path $status.ResourcesDir $LEGACY_BACKUP_FILENAME
 
+    $needRebuild = [bool]$Rebuild
     if (-not (Test-Path $cleanBak)) {
-        if (Test-Path $legacyBak) {
+        if ((Test-Path $status.AsarPath) -and (-not $status.IsPatched)) {
+            Write-Host "    [+] Создание эталонного бэкапа: $cleanBak" -ForegroundColor Green
+            Copy-Item $status.AsarPath $cleanBak -Force
+            $needRebuild = $true
+        } elseif (Test-Path $legacyBak) {
             Write-Host "    [+] Копирование существующего бэкапа в эталонный $BACKUP_FILENAME..." -ForegroundColor Green
             Copy-Item $legacyBak $cleanBak -Force
         } elseif (Test-Path $status.AsarPath) {
             Write-Host "    [+] Создание эталонного бэкапа: $cleanBak" -ForegroundColor Green
             Copy-Item $status.AsarPath $cleanBak -Force
         }
+    } elseif ((Test-Path $status.AsarPath) -and (-not $status.IsPatched)) {
+        Write-Host "    [+] Обнаружен новый оригинальный app.asar — обновление эталонного бэкапа: $cleanBak" -ForegroundColor Green
+        Copy-Item $status.AsarPath $cleanBak -Force
+        $needRebuild = $true
     } else {
         Write-Host "    [-] Эталонный бэкап уже существует: $cleanBak" -ForegroundColor DarkGray
     }
 
-    $sourcePatched = Find-PatchedAsar -ResourcesDir $status.ResourcesDir -ForceRebuild:$Rebuild
+    $sourcePatched = Find-PatchedAsar -ResourcesDir $status.ResourcesDir -ForceRebuild:$needRebuild
     if (-not $sourcePatched) {
         Write-Host "[-] ОШИБКА: Не удалось получить или собрать app.asar.patched!" -ForegroundColor Red
         return

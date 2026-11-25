@@ -5,6 +5,7 @@
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
 
 let lastRestartCall = 0;
 const RESTART_DEBOUNCE_MS = 5000;
@@ -45,12 +46,46 @@ function killLanguageServer() {
         }
     } catch (e) {}
 
+    // Fallback: targeted termination strictly scoped to Antigravity's own process tree.
+    // Strict adherence to No-Kill Policy: never kill unrelated user LSP servers.
     try {
+        const curPid = process.pid;
         if (process.platform === 'win32') {
-            execSync('taskkill /F /IM language_server_windows_x64.exe 2>nul || exit 0', { shell: true, stdio: 'ignore' });
-            execSync('taskkill /F /IM language_server.exe 2>nul || exit 0', { shell: true, stdio: 'ignore' });
+            const psCmd = `Get-CimInstance Win32_Process | Where-Object { ($_.Name -like 'language_server*.exe') -and ($_.ParentProcessId -eq ${curPid} -or $_.ExecutablePath -like '*Antigravity*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`;
+            execSync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`, { stdio: 'ignore' });
         } else {
-            execSync('pkill -9 -f "language_server" 2>/dev/null || true', { shell: true, stdio: 'ignore' });
+            // First check direct children of current Electron process
+            try {
+                const childPids = execSync(`pgrep -P ${curPid} -f "language_server" 2>/dev/null || true`, { encoding: 'utf8' }).trim();
+                if (childPids) {
+                    for (const pidStr of childPids.split(/\s+/)) {
+                        const p = parseInt(pidStr, 10);
+                        if (p > 0) {
+                            try { process.kill(p, 'SIGKILL'); } catch (_) {}
+                        }
+                    }
+                    return;
+                }
+            } catch (_) {}
+
+            // Second check: processes where cmdline or exe path contains antigravity/cloudcode
+            try {
+                const pids = execSync('pgrep -f "language_server" 2>/dev/null || true', { encoding: 'utf8' }).trim();
+                if (pids) {
+                    for (const pidStr of pids.split(/\s+/)) {
+                        const p = parseInt(pidStr, 10);
+                        if (p > 0 && p !== curPid) {
+                            try {
+                                const cmdline = fs.readFileSync(`/proc/${p}/cmdline`, 'utf8');
+                                const lower = cmdline.toLowerCase();
+                                if (lower.includes('antigravity') || lower.includes('cloudcode') || lower.includes('jetski')) {
+                                    process.kill(p, 'SIGKILL');
+                                }
+                            } catch (_) {}
+                        }
+                    }
+                }
+            } catch (_) {}
         }
     } catch (e) {}
 }

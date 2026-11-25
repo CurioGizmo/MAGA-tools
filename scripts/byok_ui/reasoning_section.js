@@ -6,31 +6,22 @@
  */
 
 var _t = (typeof globalThis.__agyT !== 'undefined') ? globalThis.__agyT : (typeof require !== 'undefined' ? require('../locales/t_helper.js')._t : function(key, fallback) { return fallback; });
+var _effortFormatter = (typeof require !== 'undefined') ? require('../ui/effort_formatter.js') : null;
+
+var formatEffortLevel = (typeof globalThis.__agyFormatEffortLevel === 'function')
+    ? globalThis.__agyFormatEffortLevel
+    : (_effortFormatter ? _effortFormatter.formatEffortLevel : function(lvl) {
+        if (!lvl) return '';
+        const key = String(lvl).toLowerCase();
+        return key === 'xhigh' ? 'Extra' : (key.charAt(0).toUpperCase() + key.slice(1));
+    });
 
 /** Canonical reasoning-effort levels (shared with sections.js). */
-const BYOK_CANONICAL_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
+const BYOK_CANONICAL_LEVELS = (_effortFormatter && _effortFormatter.CANONICAL_EFFORT_LEVELS) || ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-/**
- * SSOT display names for reasoning-effort levels. Matches the native
- * Antigravity frontend bundle map (P4): xhigh renders as "Extra" in every
- * native UI surface (selector submenu, trigger badge). Our UI must use the
- * exact same word everywhere to avoid a "XHigh vs Extra" mismatch.
- * NOTE: the variant LABEL text must keep the canonical lowercase word
- * (e.g. "(xhigh)") — only the DISPLAY goes through this map.
- */
+/** Backward-compatible display map (SSOT is formatEffortLevel). */
 const BYOK_LEVEL_DISPLAY = { none: 'None', off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra', max: 'Max' };
 
-/** Formats a canonical level to its display name (SSOT for our UI). */
-function formatEffortLevel(lvl) {
-    if (!lvl) return '';
-    const key = String(lvl).toLowerCase();
-    if (BYOK_LEVEL_DISPLAY[key]) return BYOK_LEVEL_DISPLAY[key];
-    return key.charAt(0).toUpperCase() + key.slice(1);
-}
-
-// Cross-module access inside the concatenated bundle: function declarations
-// hoist within the single IIFE scope, so formatEffortLevel is available to
-// every module in the bundle (byok_sync.js included).
 if (typeof globalThis !== 'undefined') {
     globalThis.__agyByokLevelDisplay = BYOK_LEVEL_DISPLAY;
     globalThis.__agyByokFormatEffort = formatEffortLevel;
